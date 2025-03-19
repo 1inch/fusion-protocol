@@ -59,7 +59,7 @@ contract KycNFT is Ownable, ERC721Burnable, EIP712 {
     }
 
     /**
-     * @notice Transfers a token from account to another by token owner. This function using a valid owner's signature.
+     * @notice Transfers a token from one account to another by the designated token owner, using the contract owner's valid signature. Executable by anyone.
      * @param from The address to transfer the token from.
      * @param to The address to transfer the token to.
      * @param tokenId The ID of the token to be transferred.

@@ -8,7 +8,7 @@ const constructorArgs = [
     '0x56E44874F624EbDE6efCc783eFD685f0FBDC6dcF', // owner
 ];
 const create3Deployer = '0xD935a2bb926019E0ed6fb31fbD5b1Bbb7c05bf65';
-const salt = '0x1844f417f919508065c4637df2584f67d1cad2d4a744b961f7986bf35f4d35d7';
+const salt = '0xfd0450e10366502b67f46a6037db5b90d1cad2d4a744b961f7986bf35f4d35d7';
 
 module.exports = async ({ getNamedAccounts, deployments }) => {
     console.log('running deploy script: kyc-nft');

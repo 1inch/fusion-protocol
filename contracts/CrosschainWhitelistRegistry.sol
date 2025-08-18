@@ -4,6 +4,7 @@ pragma solidity 0.8.23;
 
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import { Address } from "@1inch/solidity-utils/contracts/libraries/AddressLib.sol";
 import { UniERC20 } from "@1inch/solidity-utils/contracts/libraries/UniERC20.sol";
 import { WhitelistRegistry } from "./WhitelistRegistry.sol";
 
@@ -18,9 +19,9 @@ contract CrosschainWhitelistRegistry is Ownable {
     error SamePromotee();
 
     /// @notice Emitted when a new worker for a resolver is set.
-    event Promotion(address promoter, uint256 chainId, address promotee);
+    event Promotion(address promoter, uint256 chainId, Address promotee);
 
-    mapping(address promoter => mapping(uint256 chainId => address promotee)) public promotions;
+    mapping(address promoter => mapping(uint256 chainId => Address promotee)) public promotions;
 
     WhitelistRegistry public immutable WHITELIST_REGISTRY;
 
@@ -42,8 +43,8 @@ contract CrosschainWhitelistRegistry is Ownable {
      * @param chainId The chain ID where the worker will assigned.
      * @param promotee The worker's address.
      */
-    function promote(uint256 chainId, address promotee) external {
-        if (promotions[msg.sender][chainId] == promotee) revert SamePromotee();
+    function promote(uint256 chainId, Address promotee) external {
+        if (Address.unwrap(promotions[msg.sender][chainId]) == Address.unwrap(promotee)) revert SamePromotee();
         promotions[msg.sender][chainId] = promotee;
         emit Promotion(msg.sender, chainId, promotee);
     }
@@ -53,12 +54,12 @@ contract CrosschainWhitelistRegistry is Ownable {
      * @param chainId The chain ID to get the promoted addresses for.
      * @return promotees A list of worker addresses.
      */
-    function getPromotees(uint256 chainId) external view returns (address[] memory promotees) {
-        promotees = WHITELIST_REGISTRY.getWhitelist();
+    function getPromotees(uint256 chainId) external view returns (Address[] memory promotees) {
+        address[] memory whitelistPromotees = WHITELIST_REGISTRY.getWhitelist();
         unchecked {
-            uint256 len = promotees.length;
+            uint256 len = whitelistPromotees.length;
             for (uint256 i = 0; i < len; ++i) {
-                promotees[i] = promotions[promotees[i]][chainId];
+                promotees[i] = promotions[whitelistPromotees[i]][chainId];
             }
         }
     }

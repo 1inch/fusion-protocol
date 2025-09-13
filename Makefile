@@ -67,7 +67,7 @@ upsert-constant:
 
 deploy-skip-all:
 		@{ \
-		for secret in $(FILE_DEPLOY); do \
+		for secret in $(FILE_DEPLOY_KYC_NFT); do \
 			$(MAKE) OPS_CURRENT_DEP_FILE=$$secret deploy-skip; \
 		done \
 		}

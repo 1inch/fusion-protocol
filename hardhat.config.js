@@ -80,4 +80,7 @@ module.exports = {
         pages: 'files',
         exclude: ['mocks'],
     },
+    deployOpts: {
+        kycTokenSuffix: process.env.OPS_KYC_TOKEN_SUFFIX,
+    },
 };

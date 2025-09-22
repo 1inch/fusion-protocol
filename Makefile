@@ -4,16 +4,17 @@ ifeq ($(OPS_LAUNCH_MODE),auto)
 else
 -include .env
 endif
+export
 
-CURRENT_DIR=$(shell pwd)
+OPS_NETWORK := $(subst ",,$(OPS_NETWORK))
+OPS_CHAIN_ID := $(subst ",,$(OPS_CHAIN_ID))
 
-OPS_NETWORK_=$(shell echo "$(OPS_NETWORK)" | tr -d '\"')
-OPS_CHAIN_ID_=$(shell echo "$(OPS_CHAIN_ID)" | tr -d '\"')
+CURRENT_DIR := $(shell pwd)
 
-FILE_DEPLOY_KYC_NFT=$(CURRENT_DIR)/deploy/deploy-kyc-nft.js
-FILE_CREATE3_DEPLOYER=$(CURRENT_DIR)/deploy/constants/create3-deployer.js
-FILE_ACCESS_TOKEN_OWNER=$(CURRENT_DIR)/deploy/constants/access-token-owner.js
-FILE_ACCESS_TOKEN_SALT=$(CURRENT_DIR)/deploy/constants/access-token-salt.js
+FILE_DEPLOY_KYC_NFT := $(CURRENT_DIR)/deploy/deploy-kyc-nft.js
+FILE_CREATE3_DEPLOYER := $(CURRENT_DIR)/deploy/constants/create3-deployer.js
+FILE_ACCESS_TOKEN_OWNER := $(CURRENT_DIR)/deploy/constants/access-token-owner.js
+FILE_ACCESS_TOKEN_SALT := $(CURRENT_DIR)/deploy/constants/access-token-salt.js
 
 # New access token deployment targets
 deploy-access-token:
@@ -21,16 +22,16 @@ deploy-access-token:
 
 deploy-access-token-impl:
 		@{ \
-		yarn deploy $(OPS_NETWORK_) || exit 1; \
+		yarn deploy $(OPS_NETWORK) || exit 1; \
 		}
 
 # Validation targets
 validate-access-token:
 		@{ \
-		if [ -z "$(OPS_NETWORK_)" ]; then echo "OPS_NETWORK is not set!"; exit 1; fi; \
-		if [ -z "$(OPS_CHAIN_ID_)" ]; then echo "OPS_CHAIN_ID is not set!"; exit 1; fi; \
-		if [ -z "$(OPS_CREATE3_DEPLOYER_ADDRESS)" ] && [ "$(OPS_CHAIN_ID_)" != 324 ]; then echo "OPS_CREATE3_DEPLOYER_ADDRESS is not set!"; exit 1; fi; \
-		if [ -z "$(MAINNET_RPC_URL)" ] && [ "$(OPS_NETWORK_)" = "hardhat" ]; then echo "MAINNET_RPC_URL is not set!"; exit 1; fi; \
+		if [ -z "$(OPS_NETWORK)" ]; then echo "OPS_NETWORK is not set!"; exit 1; fi; \
+		if [ -z "$(OPS_CHAIN_ID)" ]; then echo "OPS_CHAIN_ID is not set!"; exit 1; fi; \
+		if [ -z "$(OPS_CREATE3_DEPLOYER_ADDRESS)" ] && [ "$(OPS_CHAIN_ID)" != 324 ]; then echo "OPS_CREATE3_DEPLOYER_ADDRESS is not set!"; exit 1; fi; \
+		if [ -z "$(MAINNET_RPC_URL)" ] && [ "$(OPS_NETWORK)" = "hardhat" ]; then echo "MAINNET_RPC_URL is not set!"; exit 1; fi; \
 		if [ -z "$(OPS_KYC_TOKEN_OWNER_ADDRESS)" ]; then echo "OPS_KYC_TOKEN_OWNER_ADDRESS is not set!"; exit 1; fi; \
 		if [ -z "$(OPS_KYC_TOKEN_SALT)" ]; then echo "OPS_KYC_TOKEN_SALT is not set!"; exit 1; fi; \
 		$(MAKE) process-access-token-owner process-access-token-salt process-create3-deployer; \
@@ -56,12 +57,12 @@ upsert-constant:
 			echo "variable for file $(OPS_GEN_FILE) is not set!"; \
 			exit 1; \
 		fi; \
-		if grep -q "$(OPS_CHAIN_ID_)" $(OPS_GEN_FILE); then \
-			sed -i '' 's|$(OPS_CHAIN_ID_): .*|$(OPS_CHAIN_ID_): $(OPS_GEN_VAL),|' $(OPS_GEN_FILE); \
+		if grep -q "$(OPS_CHAIN_ID)" $(OPS_GEN_FILE); then \
+			sed -i '' 's|$(OPS_CHAIN_ID): .*|$(OPS_CHAIN_ID): $(OPS_GEN_VAL),|' $(OPS_GEN_FILE); \
 			sed -i '' 's/"/'\''/g' $(OPS_GEN_FILE); \
 		else \
 			tmpfile=$$(mktemp); \
-			awk '1;/module.exports = {/{print "    $(OPS_CHAIN_ID_): $(subst ",\",$(OPS_GEN_VAL)),"}' $(OPS_GEN_FILE) > $$tmpfile && sed -i '' 's/"/'\''/g' $$tmpfile && mv $$tmpfile $(OPS_GEN_FILE); \
+			awk '1;/module.exports = {/{print "    $(OPS_CHAIN_ID): $(subst ",\",$(OPS_GEN_VAL)),"}' $(OPS_GEN_FILE) > $$tmpfile && sed -i '' 's/"/'\''/g' $$tmpfile && mv $$tmpfile $(OPS_GEN_FILE); \
 		fi \
 		}
 
@@ -97,7 +98,7 @@ install-dependencies:
 		yarn
 
 clean:
-		@rm -Rf $(CURRENT_DIR)/deployments/$(OPS_NETWORK_)/*
+		@rm -Rf $(CURRENT_DIR)/deployments/$(OPS_NETWORK)/*
 
 
 # Get deployed contract addresses from deployment files
@@ -107,8 +108,8 @@ get:
 			echo "Error: PARAMETER is not set. Usage: make get PARAMETER=OPS_AGGREGATION_EXECUTOR_SIMPLE_ADDRESS"; \
 			exit 1; \
 		fi; \
-		if [ -z "$(OPS_NETWORK_)" ]; then \
-			echo "Error: OPS_NETWORK_ is not set"; \
+		if [ -z "$(OPS_NETWORK)" ]; then \
+			echo "Error: OPS_NETWORK is not set"; \
 			exit 1; \
 		fi; \
 		CONTRACT_FILE=""; \
@@ -116,7 +117,7 @@ get:
 			"OPS_KYC_TOKEN_ADDRESS") CONTRACT_FILE="KycNFT.json" ;; \
 			*) echo "Error: Unknown parameter $(PARAMETER)"; exit 1 ;; \
 		esac; \
-		DEPLOYMENT_FILE="$(CURRENT_DIR)/deployments/$(OPS_NETWORK_)/$$CONTRACT_FILE"; \
+		DEPLOYMENT_FILE="$(CURRENT_DIR)/deployments/$(OPS_NETWORK)/$$CONTRACT_FILE"; \
 		if [ ! -f "$$DEPLOYMENT_FILE" ]; then \
 			echo "Error: Deployment file $$DEPLOYMENT_FILE not found"; \
 			exit 1; \

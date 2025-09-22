@@ -8,6 +8,7 @@ export
 
 OPS_NETWORK := $(subst ",,$(OPS_NETWORK))
 OPS_CHAIN_ID := $(subst ",,$(OPS_CHAIN_ID))
+OPS_KYC_TOKEN_SUFFIX := $(subst ",,$(OPS_KYC_TOKEN_SUFFIX))
 
 CURRENT_DIR := $(shell pwd)
 

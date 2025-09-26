@@ -13,9 +13,7 @@ OPS_KYC_TOKEN_SUFFIX := $(subst ",,$(OPS_KYC_TOKEN_SUFFIX))
 CURRENT_DIR := $(shell pwd)
 
 FILE_DEPLOY_KYC_NFT := $(CURRENT_DIR)/deploy/deploy-kyc-nft.js
-FILE_CREATE3_DEPLOYER := $(CURRENT_DIR)/deploy/constants/create3-deployer.js
-FILE_ACCESS_TOKEN_OWNER := $(CURRENT_DIR)/deploy/constants/access-token-owner.js
-FILE_ACCESS_TOKEN_SALT := $(CURRENT_DIR)/deploy/constants/access-token-salt.js
+FILE_CONSTANTS_JSON := $(CURRENT_DIR)/config/constants.json
 
 # New access token deployment targets
 deploy-access-token:
@@ -40,31 +38,35 @@ validate-access-token:
 
 # Process constant functions for new addresses
 process-access-token-owner:
-		@$(MAKE) OPS_GEN_VAL='$(OPS_KYC_TOKEN_OWNER_ADDRESS)' OPS_GEN_FILE=$(FILE_ACCESS_TOKEN_OWNER) upsert-constant
+		@$(MAKE) OPS_GEN_KEY='accessTokenOwner' OPS_GEN_VAL='$(OPS_KYC_TOKEN_OWNER_ADDRESS)' upsert-constant
 
 process-access-token-salt:
-		@$(MAKE) OPS_GEN_VAL='$(OPS_KYC_TOKEN_SALT)' OPS_GEN_FILE=$(FILE_ACCESS_TOKEN_SALT) upsert-constant
+		@$(MAKE) OPS_GEN_KEY='accessTokenSalt' OPS_GEN_VAL='$(OPS_KYC_TOKEN_SALT)' upsert-constant
 
 process-create3-deployer:
 		@{ \
 		if [ -n "$(OPS_CREATE3_DEPLOYER_ADDRESS)" ]; then \
-			$(MAKE) OPS_GEN_VAL='$(OPS_CREATE3_DEPLOYER_ADDRESS)' OPS_GEN_FILE=$(FILE_CREATE3_DEPLOYER) upsert-constant; \
+			$(MAKE) OPS_GEN_KEY='create3Deployers' OPS_GEN_VAL='$(OPS_CREATE3_DEPLOYER_ADDRESS)' upsert-constant; \
 		fi \
 		}
 
 upsert-constant:
 		@{ \
 		if [ -z "$(OPS_GEN_VAL)" ]; then \
-			echo "variable for file $(OPS_GEN_FILE) is not set!"; \
+			echo "Variable for key $(OPS_GEN_KEY) is not set!"; \
 			exit 1; \
 		fi; \
-		if grep -q "$(OPS_CHAIN_ID)" $(OPS_GEN_FILE); then \
-			sed -i '' 's|$(OPS_CHAIN_ID): .*|$(OPS_CHAIN_ID): $(OPS_GEN_VAL),|' $(OPS_GEN_FILE); \
-			sed -i '' 's/"/'\''/g' $(OPS_GEN_FILE); \
-		else \
-			tmpfile=$$(mktemp); \
-			awk '1;/module.exports = {/{print "    $(OPS_CHAIN_ID): $(subst ",\",$(OPS_GEN_VAL)),"}' $(OPS_GEN_FILE) > $$tmpfile && sed -i '' 's/"/'\''/g' $$tmpfile && mv $$tmpfile $(OPS_GEN_FILE); \
-		fi \
+		if [ -z "$(OPS_GEN_KEY)" ]; then \
+			echo "OPS_GEN_KEY is not set!"; \
+			exit 1; \
+		fi; \
+		if [ -z "$(OPS_CHAIN_ID)" ]; then \
+			echo "OPS_CHAIN_ID is not set!"; \
+			exit 1; \
+		fi; \
+		tmpfile=$$(mktemp); \
+		jq '.$(OPS_GEN_KEY)."$(OPS_CHAIN_ID)" = $(OPS_GEN_VAL)' $(FILE_CONSTANTS_JSON) > $$tmpfile && mv $$tmpfile $(FILE_CONSTANTS_JSON); \
+		echo "Updated $(OPS_GEN_KEY)[$(OPS_CHAIN_ID)] = $(OPS_GEN_VAL)"; \
 		}
 
 deploy-skip-all:
@@ -80,20 +82,10 @@ deploy-skip:
 deploy-noskip:
 		@sed -i '' 's/module.exports.skip.*/module.exports.skip = async () => false;/g' $(OPS_CURRENT_DEP_FILE)
 
-launch-hh-node:
-		@{ \
-		if [ -z "$(NODE_RPC)" ]; then \
-			echo "NODE_RPC is not set!"; \
-			exit 1; \
-		fi; \
-		echo "Launching Hardhat node with RPC: $(NODE_RPC)"; \
-		npx hardhat node --fork $(NODE_RPC) --vvvv --full-trace; \
-		}
-
 install: install-utils install-dependencies
 
 install-utils:
-		brew install yarn wget
+		brew install yarn wget jq
 
 install-dependencies:
 		yarn

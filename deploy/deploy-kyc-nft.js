@@ -1,6 +1,6 @@
 const hre = require('hardhat');
 const { deployAndGetContractWithCreate3, deployAndGetContract } = require('@1inch/solidity-utils');
-const constants = require('./constants');
+const constants = require('../config/constants');
 
 const AT_NAME = 'Resolver Access Token';
 const AT_SYMBOL = 'RES';

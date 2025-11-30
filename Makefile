@@ -147,14 +147,14 @@ process-settlement-owner:
 
 process-settlement-salt:
 		@{ \
-		if [ -n "$(OPS_SETTLEMENT_SALT)" ]; then \
+		if [ -n "$$OPS_FEE_TAKER_SALT" ]; then \
 			$(MAKE) OPS_GEN_KEY='settlementSalt' OPS_GEN_VAL='$(OPS_SETTLEMENT_SALT)' upsert-constant; \
 		fi \
 		}
 
 process-create3-deployer:
 		@{ \
-		if [ -n "$(OPS_CREATE3_DEPLOYER_ADDRESS)" ]; then \
+		if [ -n "$$OPS_CREATE3_DEPLOYER_ADDRESS" ]; then \
 			$(MAKE) OPS_GEN_KEY='create3Deployers' OPS_GEN_VAL='$(OPS_CREATE3_DEPLOYER_ADDRESS)' upsert-constant; \
 		fi \
 		}

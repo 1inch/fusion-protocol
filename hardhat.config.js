@@ -82,5 +82,6 @@ module.exports = {
     },
     deployOpts: {
         kycTokenSuffix: process.env.OPS_KYC_TOKEN_SUFFIX,
+        deploymentMethod: process.env.OPS_DEPLOYMENT_METHOD,
     },
 };

@@ -34,7 +34,7 @@
   "dependencies": {
     "@1inch/delegating": "1.1.0",
     "@1inch/limit-order-protocol-contract": "4.3.2",
-    "@1inch/solidity-utils": "6.6.0",
+    "@1inch/solidity-utils": "6.8.0",
     "@1inch/st1inch": "2.2.0",
     "@openzeppelin/contracts": "5.1.0"
   },
@@ -43,9 +43,9 @@
     "@matterlabs/hardhat-zksync-solc": "1.2.5",
     "@matterlabs/hardhat-zksync-verify": "1.7.0",
     "@nomicfoundation/hardhat-chai-matchers": "2.0.8",
+    "@nomicfoundation/hardhat-ethers": "3.0.8",
     "@nomicfoundation/hardhat-network-helpers": "1.0.12",
     "@nomicfoundation/hardhat-verify": "2.0.11",
-    "@nomicfoundation/hardhat-ethers": "3.0.8",
     "chai": "4.5.0",
     "dotenv": "16.4.5",
     "eslint": "8.57.1",

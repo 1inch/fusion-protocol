@@ -36,6 +36,7 @@ module.exports = async ({ getNamedAccounts, deployments, config }) => {
             constructorArgs,
             deployments,
             deployer,
+            skipVerify: process.env.OPS_SKIP_VERIFY === 'true',
         });
     } else {
         let salt = constants.ACCESS_TOKEN_SALT[chainId];
@@ -51,7 +52,7 @@ module.exports = async ({ getNamedAccounts, deployments, config }) => {
             create3Deployer: constants.CREATE3_DEPLOYERS[chainId],
             salt,
             deployments,
-            skipVerify: networkName === 'klaytn',
+            skipVerify: networkName === 'klaytn' || process.env.OPS_SKIP_VERIFY === 'true',
         });
     }
 };

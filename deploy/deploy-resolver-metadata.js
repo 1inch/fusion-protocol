@@ -25,6 +25,7 @@ module.exports = async ({ getNamedAccounts, deployments }) => {
         constructorArgs: [constants.POWER_POD_ADDRESS[chainId]],
         deployments,
         deployer,
+        skipVerify: process.env.OPS_SKIP_VERIFY === 'true',
     });
 };
 

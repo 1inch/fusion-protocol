@@ -11,7 +11,7 @@ module.exports = async ({ getNamedAccounts, deployments, config }) => {
     console.log(`running ${networkName} deploy script: kyc-nft`);
     const chainId = await hre.getChainId();
     console.log('network id ', chainId);
-    
+
     if (chainId !== hre.config.networks[networkName].chainId?.toString()) {
         console.log(`network chain id: ${hre.config.networks[networkName].chainId}, your chain id ${chainId}`);
         console.log('skipping wrong chain id deployment');
@@ -38,17 +38,22 @@ module.exports = async ({ getNamedAccounts, deployments, config }) => {
             deployer,
         });
     } else {
+        let salt = constants.ACCESS_TOKEN_SALT[chainId];
+        salt = salt?.startsWith('0x') ? salt : ethers.keccak256(ethers.toUtf8Bytes(salt));
+
+        console.log(`Using salt: ${salt}`);
+
         // Deploy with create3
         await deployAndGetContractWithCreate3({
             contractName: 'KycNFT',
             deploymentName,
             constructorArgs,
             create3Deployer: constants.CREATE3_DEPLOYERS[chainId],
-            salt: constants.ACCESS_TOKEN_SALT[chainId],
+            salt,
             deployments,
             skipVerify: networkName === 'klaytn',
         });
     }
 };
 
-module.exports.skip = async () => true;
+module.exports.skip = async () => false;

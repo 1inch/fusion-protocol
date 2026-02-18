@@ -147,7 +147,7 @@ process-settlement-owner:
 
 process-settlement-salt:
 		@{ \
-		if [ -n "$$OPS_FEE_TAKER_SALT" ]; then \
+		if [ -n "$$OPS_SETTLEMENT_SALT" ]; then \
 			$(MAKE) OPS_GEN_KEY='settlementSalt' OPS_GEN_VAL='$(OPS_SETTLEMENT_SALT)' upsert-constant; \
 		fi \
 		}

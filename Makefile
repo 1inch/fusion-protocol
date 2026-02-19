@@ -10,6 +10,7 @@ OPS_NETWORK := $(subst ",,$(OPS_NETWORK))
 OPS_CHAIN_ID := $(subst ",,$(OPS_CHAIN_ID))
 OPS_KYC_TOKEN_SUFFIX := $(subst ",,$(OPS_KYC_TOKEN_SUFFIX))
 OPS_DEPLOYMENT_METHOD := $(subst ",,$(OPS_DEPLOYMENT_METHOD))
+OPS_SKIP_VERIFY := $(subst ",,$(OPS_SKIP_VERIFY))
 
 CURRENT_DIR := $(shell pwd)
 
@@ -27,22 +28,22 @@ IS_ZKSYNC := $(findstring zksync,$(OPS_NETWORK))
 
 # Deployment targets
 deploy-access-token:
-		@$(MAKE) OPS_CURRENT_DEP_FILE=$(FILE_DEPLOY_KYC_NFT) validate-access-token deploy-skip-all deploy-noskip deploy-impl deploy-skip
+		@$(MAKE) OPS_SKIP_VERIFY=$(OPS_SKIP_VERIFY) OPS_CURRENT_DEP_FILE=$(FILE_DEPLOY_KYC_NFT) validate-access-token deploy-skip-all deploy-noskip deploy-impl deploy-skip
 
 deploy-settlement:
-		@$(MAKE) OPS_CURRENT_DEP_FILE=$(FILE_DEPLOY_SETTLEMENT) validate-settlement deploy-skip-all deploy-noskip deploy-impl deploy-skip
+		@$(MAKE) OPS_SKIP_VERIFY=$(OPS_SKIP_VERIFY) OPS_CURRENT_DEP_FILE=$(FILE_DEPLOY_SETTLEMENT) validate-settlement deploy-skip-all deploy-noskip deploy-impl deploy-skip
 
 deploy-power-pod:
-		@$(MAKE) OPS_CURRENT_DEP_FILE=$(FILE_DEPLOY_POWER_POD) validate-power-pod deploy-skip-all deploy-noskip deploy-impl deploy-skip
+		@$(MAKE) OPS_SKIP_VERIFY=$(OPS_SKIP_VERIFY) OPS_CURRENT_DEP_FILE=$(FILE_DEPLOY_POWER_POD) validate-power-pod deploy-skip-all deploy-noskip deploy-impl deploy-skip
 
 deploy-whitelist-registry:
-		@$(MAKE) OPS_CURRENT_DEP_FILE=$(FILE_DEPLOY_WHITELIST_REGISTRY) validate-whitelist-registry deploy-skip-all deploy-noskip deploy-impl deploy-skip
+		@$(MAKE) OPS_SKIP_VERIFY=$(OPS_SKIP_VERIFY) OPS_CURRENT_DEP_FILE=$(FILE_DEPLOY_WHITELIST_REGISTRY) validate-whitelist-registry deploy-skip-all deploy-noskip deploy-impl deploy-skip
 
 deploy-crosschain-whitelist:
-		@$(MAKE) OPS_CURRENT_DEP_FILE=$(FILE_DEPLOY_CROSSCHAIN_WHITELIST) validate-crosschain-whitelist deploy-skip-all deploy-noskip deploy-impl deploy-skip
+		@$(MAKE) OPS_SKIP_VERIFY=$(OPS_SKIP_VERIFY) OPS_CURRENT_DEP_FILE=$(FILE_DEPLOY_CROSSCHAIN_WHITELIST) validate-crosschain-whitelist deploy-skip-all deploy-noskip deploy-impl deploy-skip
 
 deploy-resolver-metadata:
-		@$(MAKE) OPS_CURRENT_DEP_FILE=$(FILE_DEPLOY_RESOLVER_METADATA) validate-resolver-metadata deploy-skip-all deploy-noskip deploy-impl deploy-skip
+		@$(MAKE) OPS_SKIP_VERIFY=$(OPS_SKIP_VERIFY) OPS_CURRENT_DEP_FILE=$(FILE_DEPLOY_RESOLVER_METADATA) validate-resolver-metadata deploy-skip-all deploy-noskip deploy-impl deploy-skip
 
 deploy-impl:
 		@{ \

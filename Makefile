@@ -121,12 +121,13 @@ validate-resolver-metadata:
 validate-mint-kyc:
 		@{ \
 		$(MAKE) validate-base || exit 1; \
+		$(MAKE) ID=OPS_ACCESS_TOKEN_ADDRESS validate || exit 1; \
 		$(MAKE) ID=OPS_MINT_TO validate || exit 1; \
 		$(MAKE) ID=OPS_MINT_TOKEN_ID validate || exit 1; \
 		NETWORK_KEY=$$(echo $(OPS_NETWORK) | tr 'a-z-' 'A-Z_')_PRIVATE_KEY; \
 		eval "VALUE=\$${$$NETWORK_KEY}"; \
 		if [ -z "$$VALUE" ]; then echo "$$NETWORK_KEY is not set!"; exit 1; fi; \
-		$(MAKE) process-mint-to process-mint-token-id || exit 1; \
+		$(MAKE) process-access-token-address process-mint-to process-mint-token-id || exit 1; \
 		}
 
 # Mint targets
@@ -326,7 +327,7 @@ help:
 	@echo "  install-dependencies       Install yarn dependencies"
 	@echo "  clean                      Remove deployment files"
 	@echo "  get PARAMETER=...          Get deployed contract address"
-	@echo "  mint-kyc                   Mint a single KycNFT token"
+	@echo "  mint-kyc                   Mint a single KycNFT token (requires OPS_ACCESS_TOKEN_ADDRESS, OPS_MINT_TO, OPS_MINT_TOKEN_ID)"
 	@echo "  validate-mint-kyc          Validate KycNFT mint variables"
 	@echo "  process-mint-to            Update mintTo constant"
 	@echo "  process-mint-token-id      Update mintTokenId constant"

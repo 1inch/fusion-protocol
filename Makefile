@@ -11,6 +11,8 @@ OPS_CHAIN_ID := $(subst ",,$(OPS_CHAIN_ID))
 OPS_KYC_TOKEN_SUFFIX := $(subst ",,$(OPS_KYC_TOKEN_SUFFIX))
 OPS_DEPLOYMENT_METHOD := $(subst ",,$(OPS_DEPLOYMENT_METHOD))
 OPS_SKIP_VERIFY := $(subst ",,$(OPS_SKIP_VERIFY))
+OPS_MINT_TO := $(subst ",,$(OPS_MINT_TO))
+OPS_MINT_TOKEN_ID := $(subst ",,$(OPS_MINT_TOKEN_ID))
 
 CURRENT_DIR := $(shell pwd)
 
@@ -20,6 +22,7 @@ FILE_DEPLOY_POWER_POD := $(CURRENT_DIR)/deploy/deploy-power-pod.js
 FILE_DEPLOY_WHITELIST_REGISTRY := $(CURRENT_DIR)/deploy/deploy-whitelist-registry.js
 FILE_DEPLOY_CROSSCHAIN_WHITELIST := $(CURRENT_DIR)/deploy/deploy-crosschain-whitelist.js
 FILE_DEPLOY_RESOLVER_METADATA := $(CURRENT_DIR)/deploy/deploy-resolver-metadata.js
+FILE_MINT_KYC := $(CURRENT_DIR)/scripts/mint-kyc.js
 FILE_CONSTANTS_JSON := $(CURRENT_DIR)/config/constants.json
 
 ALL_DEPLOY_FILES := $(FILE_DEPLOY_KYC_NFT) $(FILE_DEPLOY_SETTLEMENT) $(FILE_DEPLOY_POWER_POD) $(FILE_DEPLOY_WHITELIST_REGISTRY) $(FILE_DEPLOY_CROSSCHAIN_WHITELIST) $(FILE_DEPLOY_RESOLVER_METADATA)
@@ -115,6 +118,26 @@ validate-resolver-metadata:
 		$(MAKE) process-power-pod || exit 1; \
 		}
 
+validate-mint-kyc:
+		@{ \
+		$(MAKE) validate-base || exit 1; \
+		$(MAKE) ID=OPS_MINT_TO validate || exit 1; \
+		$(MAKE) ID=OPS_MINT_TOKEN_ID validate || exit 1; \
+		NETWORK_KEY=$$(echo $(OPS_NETWORK) | tr 'a-z-' 'A-Z_')_PRIVATE_KEY; \
+		eval "VALUE=\$${$$NETWORK_KEY}"; \
+		if [ -z "$$VALUE" ]; then echo "$$NETWORK_KEY is not set!"; exit 1; fi; \
+		$(MAKE) process-mint-to process-mint-token-id || exit 1; \
+		}
+
+# Mint targets
+mint-kyc:
+		@$(MAKE) validate-mint-kyc mint-kyc-impl
+
+mint-kyc-impl:
+		@{ \
+		yarn hardhat run $(FILE_MINT_KYC) --network $(OPS_NETWORK) || exit 1; \
+		}
+
 # Process constant functions
 process-access-token-owner:
 		@$(MAKE) OPS_GEN_KEY='accessTokenOwner' OPS_GEN_VAL='$(OPS_KYC_TOKEN_OWNER_ADDRESS)' upsert-constant
@@ -159,6 +182,12 @@ process-create3-deployer:
 			$(MAKE) OPS_GEN_KEY='create3Deployers' OPS_GEN_VAL='$(OPS_CREATE3_DEPLOYER_ADDRESS)' upsert-constant; \
 		fi \
 		}
+
+process-mint-to:
+		@$(MAKE) OPS_GEN_KEY='mintTo' OPS_GEN_VAL='$(OPS_MINT_TO)' upsert-constant
+
+process-mint-token-id:
+		@$(MAKE) OPS_GEN_KEY='mintTokenId' OPS_GEN_VAL='$(OPS_MINT_TOKEN_ID)' upsert-constant
 
 upsert-constant:
 		@{ \
@@ -297,7 +326,11 @@ help:
 	@echo "  install-dependencies       Install yarn dependencies"
 	@echo "  clean                      Remove deployment files"
 	@echo "  get PARAMETER=...          Get deployed contract address"
+	@echo "  mint-kyc                   Mint a single KycNFT token"
+	@echo "  validate-mint-kyc          Validate KycNFT mint variables"
+	@echo "  process-mint-to            Update mintTo constant"
+	@echo "  process-mint-token-id      Update mintTokenId constant"
 	@echo "  help                       Show this help message"
 
 
-.PHONY: help deploy-access-token deploy-settlement deploy-power-pod deploy-whitelist-registry deploy-crosschain-whitelist deploy-resolver-metadata deploy-impl validate-base validate-access-token validate-settlement validate-power-pod validate-whitelist-registry validate-crosschain-whitelist validate-resolver-metadata process-access-token-owner process-access-token-salt process-access-token-address process-settlement-owner process-settlement-salt process-router-v6 process-weth process-st1inch process-power-pod process-dao process-whitelist-registry process-create3-deployer upsert-constant deploy-skip-all deploy-skip deploy-noskip install install-utils install-dependencies clean get get-outputs validate
+.PHONY: help deploy-access-token deploy-settlement deploy-power-pod deploy-whitelist-registry deploy-crosschain-whitelist deploy-resolver-metadata deploy-impl validate-base validate-access-token validate-settlement validate-power-pod validate-whitelist-registry validate-crosschain-whitelist validate-resolver-metadata validate-mint-kyc process-access-token-owner process-access-token-salt process-access-token-address process-settlement-owner process-settlement-salt process-router-v6 process-weth process-st1inch process-power-pod process-dao process-whitelist-registry process-create3-deployer process-mint-to process-mint-token-id upsert-constant deploy-skip-all deploy-skip deploy-noskip install install-utils install-dependencies clean get get-outputs validate mint-kyc mint-kyc-impl

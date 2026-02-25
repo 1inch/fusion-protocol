@@ -13,6 +13,8 @@ OPS_DEPLOYMENT_METHOD := $(subst ",,$(OPS_DEPLOYMENT_METHOD))
 OPS_SKIP_VERIFY := $(subst ",,$(OPS_SKIP_VERIFY))
 OPS_MINT_TO := $(subst ",,$(OPS_MINT_TO))
 OPS_MINT_TOKEN_ID := $(subst ",,$(OPS_MINT_TOKEN_ID))
+OPS_CONTRACT_ADDRESS := $(subst ",,$(OPS_CONTRACT_ADDRESS))
+OPS_NEW_OWNER := $(subst ",,$(OPS_NEW_OWNER))
 
 CURRENT_DIR := $(shell pwd)
 
@@ -23,6 +25,7 @@ FILE_DEPLOY_WHITELIST_REGISTRY := $(CURRENT_DIR)/deploy/deploy-whitelist-registr
 FILE_DEPLOY_CROSSCHAIN_WHITELIST := $(CURRENT_DIR)/deploy/deploy-crosschain-whitelist.js
 FILE_DEPLOY_RESOLVER_METADATA := $(CURRENT_DIR)/deploy/deploy-resolver-metadata.js
 FILE_MINT_KYC := $(CURRENT_DIR)/scripts/mint-kyc.js
+FILE_TRANSFER_OWNERSHIP := $(CURRENT_DIR)/scripts/transfer-ownership.js
 FILE_CONSTANTS_JSON := $(CURRENT_DIR)/config/constants.json
 
 ALL_DEPLOY_FILES := $(FILE_DEPLOY_KYC_NFT) $(FILE_DEPLOY_SETTLEMENT) $(FILE_DEPLOY_POWER_POD) $(FILE_DEPLOY_WHITELIST_REGISTRY) $(FILE_DEPLOY_CROSSCHAIN_WHITELIST) $(FILE_DEPLOY_RESOLVER_METADATA)
@@ -130,6 +133,26 @@ validate-mint-kyc:
 		$(MAKE) process-access-token-address process-mint-to process-mint-token-id || exit 1; \
 		}
 
+# Transfer ownership targets
+validate-transfer-ownership:
+		@{ \
+		$(MAKE) validate-base || exit 1; \
+		$(MAKE) ID=OPS_CONTRACT_ADDRESS validate || exit 1; \
+		$(MAKE) ID=OPS_NEW_OWNER validate || exit 1; \
+		NETWORK_KEY=$$(echo $(OPS_NETWORK) | tr 'a-z-' 'A-Z_')_PRIVATE_KEY; \
+		eval "VALUE=\$${$$NETWORK_KEY}"; \
+		if [ -z "$$VALUE" ]; then echo "$$NETWORK_KEY is not set!"; exit 1; fi; \
+		$(MAKE) process-contract-address process-new-owner || exit 1; \
+		}
+
+transfer-ownership:
+		@$(MAKE) validate-transfer-ownership transfer-ownership-impl
+
+transfer-ownership-impl:
+		@{ \
+		yarn hardhat run $(FILE_TRANSFER_OWNERSHIP) --network $(OPS_NETWORK) || exit 1; \
+		}
+
 # Mint targets
 mint-kyc:
 		@$(MAKE) validate-mint-kyc mint-kyc-impl
@@ -189,6 +212,12 @@ process-mint-to:
 
 process-mint-token-id:
 		@$(MAKE) OPS_GEN_KEY='mintTokenId' OPS_GEN_VAL='$(OPS_MINT_TOKEN_ID)' upsert-constant
+
+process-contract-address:
+		@$(MAKE) OPS_GEN_KEY='contractAddress' OPS_GEN_VAL='$(OPS_CONTRACT_ADDRESS)' upsert-constant
+
+process-new-owner:
+		@$(MAKE) OPS_GEN_KEY='newOwner' OPS_GEN_VAL='$(OPS_NEW_OWNER)' upsert-constant
 
 upsert-constant:
 		@{ \
@@ -331,7 +360,11 @@ help:
 	@echo "  validate-mint-kyc          Validate KycNFT mint variables"
 	@echo "  process-mint-to            Update mintTo constant"
 	@echo "  process-mint-token-id      Update mintTokenId constant"
+	@echo "  transfer-ownership         Transfer ownership of any Ownable contract (requires OPS_CONTRACT_ADDRESS, OPS_NEW_OWNER)"
+	@echo "  validate-transfer-ownership Validate transfer ownership variables"
+	@echo "  process-contract-address   Update contractAddress constant"
+	@echo "  process-new-owner          Update newOwner constant"
 	@echo "  help                       Show this help message"
 
 
-.PHONY: help deploy-access-token deploy-settlement deploy-power-pod deploy-whitelist-registry deploy-crosschain-whitelist deploy-resolver-metadata deploy-impl validate-base validate-access-token validate-settlement validate-power-pod validate-whitelist-registry validate-crosschain-whitelist validate-resolver-metadata validate-mint-kyc process-access-token-owner process-access-token-salt process-access-token-address process-settlement-owner process-settlement-salt process-router-v6 process-weth process-st1inch process-power-pod process-dao process-whitelist-registry process-create3-deployer process-mint-to process-mint-token-id upsert-constant deploy-skip-all deploy-skip deploy-noskip install install-utils install-dependencies clean get get-outputs validate mint-kyc mint-kyc-impl
+.PHONY: help deploy-access-token deploy-settlement deploy-power-pod deploy-whitelist-registry deploy-crosschain-whitelist deploy-resolver-metadata deploy-impl validate-base validate-access-token validate-settlement validate-power-pod validate-whitelist-registry validate-crosschain-whitelist validate-resolver-metadata validate-mint-kyc validate-transfer-ownership process-access-token-owner process-access-token-salt process-access-token-address process-settlement-owner process-settlement-salt process-router-v6 process-weth process-st1inch process-power-pod process-dao process-whitelist-registry process-create3-deployer process-mint-to process-mint-token-id process-contract-address process-new-owner upsert-constant deploy-skip-all deploy-skip deploy-noskip install install-utils install-dependencies clean get get-outputs validate mint-kyc mint-kyc-impl transfer-ownership transfer-ownership-impl

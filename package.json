@@ -1,6 +1,6 @@
 {
   "name": "@1inch/limit-order-settlement",
-  "version": "3.1.1",
+  "version": "3.1.2",
   "description": "1inch Limit Order Settlement",
   "repository": {
     "type": "git",
@@ -69,6 +69,7 @@
   },
   "resolutions": {
     "elliptic": "6.6.1",
-    "form-data": "4.0.4"
+    "form-data": "4.0.4",
+    "handlebars": "4.7.9"
   }
 }

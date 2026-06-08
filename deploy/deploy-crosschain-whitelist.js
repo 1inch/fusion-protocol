@@ -26,6 +26,7 @@ module.exports = async ({ getNamedAccounts, deployments }) => {
         deployments,
         deployer,
         deploymentName: 'CrosschainWhitelistRegistry',
+        skipVerify: process.env.OPS_SKIP_VERIFY === 'true',
     });
 
     const tx = await whitelist.transferOwnership(constants.DAO_ADDRESS[chainId]);

@@ -25,6 +25,7 @@ module.exports = async ({ getNamedAccounts, deployments }) => {
         constructorArgs: ['Delegated st1INCH', 'dst1INCH', constants.ST1INCH_ADDR[chainId]],
         deployments,
         deployer,
+        skipVerify: process.env.OPS_SKIP_VERIFY === 'true',
     });
 };
 

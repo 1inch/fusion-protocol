@@ -10,6 +10,11 @@ OPS_NETWORK := $(subst ",,$(OPS_NETWORK))
 OPS_CHAIN_ID := $(subst ",,$(OPS_CHAIN_ID))
 OPS_KYC_TOKEN_SUFFIX := $(subst ",,$(OPS_KYC_TOKEN_SUFFIX))
 OPS_DEPLOYMENT_METHOD := $(subst ",,$(OPS_DEPLOYMENT_METHOD))
+OPS_SKIP_VERIFY := $(subst ",,$(OPS_SKIP_VERIFY))
+OPS_MINT_TO := $(subst ",,$(OPS_MINT_TO))
+OPS_MINT_TOKEN_ID := $(subst ",,$(OPS_MINT_TOKEN_ID))
+OPS_CONTRACT_ADDRESS := $(subst ",,$(OPS_CONTRACT_ADDRESS))
+OPS_NEW_OWNER := $(subst ",,$(OPS_NEW_OWNER))
 
 CURRENT_DIR := $(shell pwd)
 
@@ -19,6 +24,8 @@ FILE_DEPLOY_POWER_POD := $(CURRENT_DIR)/deploy/deploy-power-pod.js
 FILE_DEPLOY_WHITELIST_REGISTRY := $(CURRENT_DIR)/deploy/deploy-whitelist-registry.js
 FILE_DEPLOY_CROSSCHAIN_WHITELIST := $(CURRENT_DIR)/deploy/deploy-crosschain-whitelist.js
 FILE_DEPLOY_RESOLVER_METADATA := $(CURRENT_DIR)/deploy/deploy-resolver-metadata.js
+FILE_MINT_KYC := $(CURRENT_DIR)/scripts/mint-kyc.js
+FILE_TRANSFER_OWNERSHIP := $(CURRENT_DIR)/scripts/transfer-ownership.js
 FILE_CONSTANTS_JSON := $(CURRENT_DIR)/config/constants.json
 
 ALL_DEPLOY_FILES := $(FILE_DEPLOY_KYC_NFT) $(FILE_DEPLOY_SETTLEMENT) $(FILE_DEPLOY_POWER_POD) $(FILE_DEPLOY_WHITELIST_REGISTRY) $(FILE_DEPLOY_CROSSCHAIN_WHITELIST) $(FILE_DEPLOY_RESOLVER_METADATA)
@@ -27,22 +34,22 @@ IS_ZKSYNC := $(findstring zksync,$(OPS_NETWORK))
 
 # Deployment targets
 deploy-access-token:
-		@$(MAKE) OPS_CURRENT_DEP_FILE=$(FILE_DEPLOY_KYC_NFT) validate-access-token deploy-skip-all deploy-noskip deploy-impl deploy-skip
+		@$(MAKE) OPS_SKIP_VERIFY=$(OPS_SKIP_VERIFY) OPS_CURRENT_DEP_FILE=$(FILE_DEPLOY_KYC_NFT) validate-access-token deploy-skip-all deploy-noskip deploy-impl deploy-skip
 
 deploy-settlement:
-		@$(MAKE) OPS_CURRENT_DEP_FILE=$(FILE_DEPLOY_SETTLEMENT) validate-settlement deploy-skip-all deploy-noskip deploy-impl deploy-skip
+		@$(MAKE) OPS_SKIP_VERIFY=$(OPS_SKIP_VERIFY) OPS_CURRENT_DEP_FILE=$(FILE_DEPLOY_SETTLEMENT) validate-settlement deploy-skip-all deploy-noskip deploy-impl deploy-skip
 
 deploy-power-pod:
-		@$(MAKE) OPS_CURRENT_DEP_FILE=$(FILE_DEPLOY_POWER_POD) validate-power-pod deploy-skip-all deploy-noskip deploy-impl deploy-skip
+		@$(MAKE) OPS_SKIP_VERIFY=$(OPS_SKIP_VERIFY) OPS_CURRENT_DEP_FILE=$(FILE_DEPLOY_POWER_POD) validate-power-pod deploy-skip-all deploy-noskip deploy-impl deploy-skip
 
 deploy-whitelist-registry:
-		@$(MAKE) OPS_CURRENT_DEP_FILE=$(FILE_DEPLOY_WHITELIST_REGISTRY) validate-whitelist-registry deploy-skip-all deploy-noskip deploy-impl deploy-skip
+		@$(MAKE) OPS_SKIP_VERIFY=$(OPS_SKIP_VERIFY) OPS_CURRENT_DEP_FILE=$(FILE_DEPLOY_WHITELIST_REGISTRY) validate-whitelist-registry deploy-skip-all deploy-noskip deploy-impl deploy-skip
 
 deploy-crosschain-whitelist:
-		@$(MAKE) OPS_CURRENT_DEP_FILE=$(FILE_DEPLOY_CROSSCHAIN_WHITELIST) validate-crosschain-whitelist deploy-skip-all deploy-noskip deploy-impl deploy-skip
+		@$(MAKE) OPS_SKIP_VERIFY=$(OPS_SKIP_VERIFY) OPS_CURRENT_DEP_FILE=$(FILE_DEPLOY_CROSSCHAIN_WHITELIST) validate-crosschain-whitelist deploy-skip-all deploy-noskip deploy-impl deploy-skip
 
 deploy-resolver-metadata:
-		@$(MAKE) OPS_CURRENT_DEP_FILE=$(FILE_DEPLOY_RESOLVER_METADATA) validate-resolver-metadata deploy-skip-all deploy-noskip deploy-impl deploy-skip
+		@$(MAKE) OPS_SKIP_VERIFY=$(OPS_SKIP_VERIFY) OPS_CURRENT_DEP_FILE=$(FILE_DEPLOY_RESOLVER_METADATA) validate-resolver-metadata deploy-skip-all deploy-noskip deploy-impl deploy-skip
 
 deploy-impl:
 		@{ \
@@ -114,6 +121,47 @@ validate-resolver-metadata:
 		$(MAKE) process-power-pod || exit 1; \
 		}
 
+validate-mint-kyc:
+		@{ \
+		$(MAKE) validate-base || exit 1; \
+		$(MAKE) ID=OPS_ACCESS_TOKEN_ADDRESS validate || exit 1; \
+		$(MAKE) ID=OPS_MINT_TO validate || exit 1; \
+		$(MAKE) ID=OPS_MINT_TOKEN_ID validate || exit 1; \
+		NETWORK_KEY=$$(echo $(OPS_NETWORK) | tr 'a-z-' 'A-Z_')_PRIVATE_KEY; \
+		eval "VALUE=\$${$$NETWORK_KEY}"; \
+		if [ -z "$$VALUE" ]; then echo "$$NETWORK_KEY is not set!"; exit 1; fi; \
+		$(MAKE) process-access-token-address process-mint-to process-mint-token-id || exit 1; \
+		}
+
+# Transfer ownership targets
+validate-transfer-ownership:
+		@{ \
+		$(MAKE) validate-base || exit 1; \
+		$(MAKE) ID=OPS_CONTRACT_ADDRESS validate || exit 1; \
+		$(MAKE) ID=OPS_NEW_OWNER validate || exit 1; \
+		NETWORK_KEY=$$(echo $(OPS_NETWORK) | tr 'a-z-' 'A-Z_')_PRIVATE_KEY; \
+		eval "VALUE=\$${$$NETWORK_KEY}"; \
+		if [ -z "$$VALUE" ]; then echo "$$NETWORK_KEY is not set!"; exit 1; fi; \
+		$(MAKE) process-contract-address process-new-owner || exit 1; \
+		}
+
+transfer-ownership:
+		@$(MAKE) validate-transfer-ownership transfer-ownership-impl
+
+transfer-ownership-impl:
+		@{ \
+		yarn hardhat run $(FILE_TRANSFER_OWNERSHIP) --network $(OPS_NETWORK) || exit 1; \
+		}
+
+# Mint targets
+mint-kyc:
+		@$(MAKE) validate-mint-kyc mint-kyc-impl
+
+mint-kyc-impl:
+		@{ \
+		yarn hardhat run $(FILE_MINT_KYC) --network $(OPS_NETWORK) || exit 1; \
+		}
+
 # Process constant functions
 process-access-token-owner:
 		@$(MAKE) OPS_GEN_KEY='accessTokenOwner' OPS_GEN_VAL='$(OPS_KYC_TOKEN_OWNER_ADDRESS)' upsert-constant
@@ -147,7 +195,7 @@ process-settlement-owner:
 
 process-settlement-salt:
 		@{ \
-		if [ -n "$$OPS_FEE_TAKER_SALT" ]; then \
+		if [ -n "$$OPS_SETTLEMENT_SALT" ]; then \
 			$(MAKE) OPS_GEN_KEY='settlementSalt' OPS_GEN_VAL='$(OPS_SETTLEMENT_SALT)' upsert-constant; \
 		fi \
 		}
@@ -159,13 +207,29 @@ process-create3-deployer:
 		fi \
 		}
 
+process-mint-to:
+		@$(MAKE) OPS_GEN_KEY='mintTo' OPS_GEN_VAL='$(OPS_MINT_TO)' upsert-constant
+
+process-mint-token-id:
+		@$(MAKE) OPS_GEN_KEY='mintTokenId' OPS_GEN_VAL='$(OPS_MINT_TOKEN_ID)' upsert-constant
+
+process-contract-address:
+		@$(MAKE) OPS_GEN_KEY='contractAddress' OPS_GEN_VAL='$(OPS_CONTRACT_ADDRESS)' upsert-constant
+
+process-new-owner:
+		@$(MAKE) OPS_GEN_KEY='newOwner' OPS_GEN_VAL='$(OPS_NEW_OWNER)' upsert-constant
+
 upsert-constant:
 		@{ \
 		$(MAKE) ID=OPS_GEN_VAL validate || exit 1; \
 		$(MAKE) ID=OPS_GEN_KEY validate || exit 1; \
 		$(MAKE) ID=OPS_CHAIN_ID validate || exit 1; \
 		tmpfile=$$(mktemp); \
-		jq '.$(OPS_GEN_KEY)."$(OPS_CHAIN_ID)" = $(OPS_GEN_VAL)' $(FILE_CONSTANTS_JSON) > $$tmpfile && mv $$tmpfile $(FILE_CONSTANTS_JSON); \
+		if echo '$(OPS_GEN_VAL)' | jq type >/dev/null 2>&1; then \
+			jq --argjson val '$(OPS_GEN_VAL)' '.$(OPS_GEN_KEY)."$(OPS_CHAIN_ID)" = $$val' $(FILE_CONSTANTS_JSON) > $$tmpfile; \
+		else \
+			jq --arg val '$(OPS_GEN_VAL)' '.$(OPS_GEN_KEY)."$(OPS_CHAIN_ID)" = $$val' $(FILE_CONSTANTS_JSON) > $$tmpfile; \
+		fi && mv $$tmpfile $(FILE_CONSTANTS_JSON); \
 		echo "Updated $(OPS_GEN_KEY)[$(OPS_CHAIN_ID)] = $(OPS_GEN_VAL)"; \
 		}
 
@@ -292,7 +356,15 @@ help:
 	@echo "  install-dependencies       Install yarn dependencies"
 	@echo "  clean                      Remove deployment files"
 	@echo "  get PARAMETER=...          Get deployed contract address"
+	@echo "  mint-kyc                   Mint a single KycNFT token (requires OPS_ACCESS_TOKEN_ADDRESS, OPS_MINT_TO, OPS_MINT_TOKEN_ID)"
+	@echo "  validate-mint-kyc          Validate KycNFT mint variables"
+	@echo "  process-mint-to            Update mintTo constant"
+	@echo "  process-mint-token-id      Update mintTokenId constant"
+	@echo "  transfer-ownership         Transfer ownership of any Ownable contract (requires OPS_CONTRACT_ADDRESS, OPS_NEW_OWNER)"
+	@echo "  validate-transfer-ownership Validate transfer ownership variables"
+	@echo "  process-contract-address   Update contractAddress constant"
+	@echo "  process-new-owner          Update newOwner constant"
 	@echo "  help                       Show this help message"
 
 
-.PHONY: help deploy-access-token deploy-settlement deploy-power-pod deploy-whitelist-registry deploy-crosschain-whitelist deploy-resolver-metadata deploy-impl validate-base validate-access-token validate-settlement validate-power-pod validate-whitelist-registry validate-crosschain-whitelist validate-resolver-metadata process-access-token-owner process-access-token-salt process-access-token-address process-settlement-owner process-settlement-salt process-router-v6 process-weth process-st1inch process-power-pod process-dao process-whitelist-registry process-create3-deployer upsert-constant deploy-skip-all deploy-skip deploy-noskip install install-utils install-dependencies clean get get-outputs validate
+.PHONY: help deploy-access-token deploy-settlement deploy-power-pod deploy-whitelist-registry deploy-crosschain-whitelist deploy-resolver-metadata deploy-impl validate-base validate-access-token validate-settlement validate-power-pod validate-whitelist-registry validate-crosschain-whitelist validate-resolver-metadata validate-mint-kyc validate-transfer-ownership process-access-token-owner process-access-token-salt process-access-token-address process-settlement-owner process-settlement-salt process-router-v6 process-weth process-st1inch process-power-pod process-dao process-whitelist-registry process-create3-deployer process-mint-to process-mint-token-id process-contract-address process-new-owner upsert-constant deploy-skip-all deploy-skip deploy-noskip install install-utils install-dependencies clean get get-outputs validate mint-kyc mint-kyc-impl transfer-ownership transfer-ownership-impl

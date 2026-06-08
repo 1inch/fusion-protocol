@@ -25,6 +25,7 @@ module.exports = async ({ getNamedAccounts, deployments }) => {
         constructorArgs: [constants.POWER_POD_ADDRESS[chainId], '1000'], // 1000 = 10% threshold
         deployments,
         deployer,
+        skipVerify: process.env.OPS_SKIP_VERIFY === 'true',
     });
 
     const tx = await whitelist.transferOwnership(constants.DAO_ADDRESS[chainId]);

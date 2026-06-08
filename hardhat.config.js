@@ -18,7 +18,10 @@ if (getNetwork().indexOf('zksync') !== -1) {
     require('@nomicfoundation/hardhat-verify');
 }
 
-const { networks, etherscan } = (new Networks()).registerAll();
+const n = new Networks();
+const { networks } = n.registerAll();
+const etherscan = n.getEtherscanConfig(getNetwork());
+
 networks.hardhat = Object.assign(networks.hardhat, {
     initialBaseFeePerGas: 1,
     gasPrice: 1,

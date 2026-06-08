@@ -47,6 +47,7 @@ module.exports = async ({ getNamedAccounts, deployments, config }) => {
             create3Deployer: constants.CREATE3_DEPLOYERS[chainId],
             salt,
             deployments,
+            skipVerify: process.env.OPS_SKIP_VERIFY === 'true',
         });
     } else {
         // Deploy on zkSync-like networks without create3
@@ -57,6 +58,7 @@ module.exports = async ({ getNamedAccounts, deployments, config }) => {
             constructorArgs,
             deployments,
             deployer,
+            skipVerify: process.env.OPS_SKIP_VERIFY === 'true',
         });
     }
 };

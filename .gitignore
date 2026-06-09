@@ -17,4 +17,5 @@ coverage.json
 
 .idea
 
-.env
+.env*
+.yarn

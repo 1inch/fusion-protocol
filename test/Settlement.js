@@ -1,7 +1,7 @@
 const { ethers } = require('hardhat');
 const { loadFixture } = require('@nomicfoundation/hardhat-network-helpers');
 const { time, expect, ether, trim0x, timeIncreaseTo, getPermit, getPermit2, compressPermit, permit2Contract, deployContract } = require('@1inch/solidity-utils');
-const { buildMakerTraits } = require('@1inch/limit-order-protocol-contract/test/helpers/orderUtils');
+const { buildMakerTraits, signOrder } = require('@1inch/limit-order-protocol-contract/test/helpers/orderUtils');
 const { initContractsForSettlement } = require('./helpers/fixtures');
 const { buildAuctionDetails, buildCalldataForOrder } = require('./helpers/fusionUtils');
 
@@ -718,22 +718,28 @@ describe('Settlement', function () {
         describe('registered auction start', function () {
             it('starts auction from registeredAt when it is later than signed start', async function () {
                 const base = await loadFixture(initContractsForSettlement);
-                const registrator = await deployContract('OrderRegistratorMock');
                 const signedStart = await time.latest() - 1000; // auction would already be finished
+                const duration = 900n;
+                const initialRateBump = 1000000n;
                 const setupData = {
                     ...base,
                     auction: await buildAuctionDetails({
                         startTime: signedStart,
-                        duration: 900,
-                        initialRateBump: 1000000n,
-                        orderRegistrator: await registrator.getAddress(),
+                        duration: Number(duration),
+                        initialRateBump,
+                        useRegisteredAuctionStart: true,
                     }),
                 };
                 const {
-                    contracts: { dai, weth, lopv4, resolver },
+                    contracts: { dai, weth, lopv4, resolver, settlement },
                     accounts: { owner, alice },
-                    others: { abiCoder },
+                    others: { abiCoder, chainId },
                 } = setupData;
+
+                // Fill 1 second after registration; rate bump decays linearly with no points.
+                const rateBump = (duration - 1n) * initialRateBump / duration;
+                const basePoints = 10_000_000n;
+                const expectedTaking = (ether('0.1') * (basePoints + rateBump) + basePoints - 1n) / basePoints;
 
                 const resolverCalldata = abiCoder.encode(
                     ['address[]', 'bytes[]'],
@@ -743,7 +749,7 @@ describe('Settlement', function () {
                             weth.interface.encodeFunctionData('transferFrom', [
                                 owner.address,
                                 await resolver.getAddress(),
-                                ether('0.11'),
+                                expectedTaking,
                             ]),
                         ],
                     ],
@@ -763,25 +769,24 @@ describe('Settlement', function () {
                     threshold: ether('100'),
                     additionalDataForSettlement: resolverCalldata,
                     isInnermostOrder: true,
-                    isMakingAmount: false,
-                    fillingAmount: ether('0.11'),
+                    isMakingAmount: true,
+                    fillingAmount: ether('100'),
                     returnOrder: true,
                 });
 
-                const orderHash = await lopv4.hashOrder(order);
-                const registeredAt = await time.latest() + 10;
-                await registrator.setRegisteredAt(orderHash, registeredAt);
+                const signature = ethers.Signature.from(await signOrder(order, chainId, await lopv4.getAddress(), alice)).compactSerialized;
+                await weth.approve(resolver, expectedTaking);
+                await settlement.registerOrder(order, order.extension, signature);
+                const registeredAt = await settlement.registeredAt(await lopv4.hashOrder(order));
 
-                await weth.approve(resolver, ether('0.11'));
-                await time.setNextBlockTimestamp(registeredAt);
+                await time.setNextBlockTimestamp(registeredAt + 1n);
                 const txn = await resolver.settleOrders(fillOrderToData);
                 await expect(txn).to.changeTokenBalances(dai, [resolver, alice], [ether('100'), ether('-100')]);
-                await expect(txn).to.changeTokenBalances(weth, [owner, alice], [ether('-0.11'), ether('0.11')]);
+                await expect(txn).to.changeTokenBalances(weth, [owner, alice], [-expectedTaking, expectedTaking]);
             });
 
             it('keeps signed start when registeredAt is earlier', async function () {
                 const base = await loadFixture(initContractsForSettlement);
-                const registrator = await deployContract('OrderRegistratorMock');
                 const signedStart = await time.latest() + 100;
                 const setupData = {
                     ...base,
@@ -790,13 +795,13 @@ describe('Settlement', function () {
                         delay: 0,
                         duration: 900,
                         initialRateBump: 1000000n,
-                        orderRegistrator: await registrator.getAddress(),
+                        useRegisteredAuctionStart: true,
                     }),
                 };
                 const {
-                    contracts: { dai, weth, lopv4, resolver },
+                    contracts: { dai, weth, lopv4, resolver, settlement },
                     accounts: { owner, alice },
-                    others: { abiCoder },
+                    others: { abiCoder, chainId },
                 } = setupData;
 
                 const resolverCalldata = abiCoder.encode(
@@ -832,8 +837,8 @@ describe('Settlement', function () {
                     returnOrder: true,
                 });
 
-                const orderHash = await lopv4.hashOrder(order);
-                await registrator.setRegisteredAt(orderHash, signedStart - 50);
+                const signature = ethers.Signature.from(await signOrder(order, chainId, await lopv4.getAddress(), alice)).compactSerialized;
+                await settlement.registerOrder(order, order.extension, signature);
 
                 await weth.approve(resolver, ether('0.11'));
                 await time.setNextBlockTimestamp(signedStart);
@@ -844,14 +849,13 @@ describe('Settlement', function () {
 
             it('uses signed start when order is not registered', async function () {
                 const base = await loadFixture(initContractsForSettlement);
-                const registrator = await deployContract('OrderRegistratorMock');
                 const setupData = {
                     ...base,
                     auction: await buildAuctionDetails({
                         startTime: await time.latest() + 10,
                         delay: 60,
                         initialRateBump: 1000000n,
-                        orderRegistrator: await registrator.getAddress(),
+                        useRegisteredAuctionStart: true,
                     }),
                 };
                 const {

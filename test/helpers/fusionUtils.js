@@ -22,6 +22,7 @@ async function buildCalldataForOrder({
     whitelistResolvers = [], // bytes10[]
     resolversAllowedTime = [], // uint16[]
     customPostInteraction = '0x',
+    returnOrder = false,
 }) {
     const {
         contracts: { lopv4, settlement, resolver },
@@ -71,7 +72,7 @@ async function buildCalldataForOrder({
         target: await resolver.getAddress(),
     });
 
-    return lopv4.interface.encodeFunctionData('fillOrderArgs', [
+    const calldata = lopv4.interface.encodeFunctionData('fillOrderArgs', [
         order,
         r,
         vs,
@@ -79,6 +80,7 @@ async function buildCalldataForOrder({
         takerTraits.traits,
         takerTraits.args,
     ]);
+    return returnOrder ? { calldata, order } : calldata;
 }
 
 async function buildAuctionDetails({
@@ -89,16 +91,22 @@ async function buildAuctionDetails({
     delay = 0,
     initialRateBump = 0,
     points = [],
+    orderRegistrator, // if set, flags bit 7 is set and address is packed before points
 } = {}) {
     startTime = startTime || await time.latest();
+    const flags = orderRegistrator ? (1 << 7) : 0;
     let details = ethers.solidityPacked(
-        ['uint24', 'uint32', 'uint32', 'uint24', 'uint24'], [gasBumpEstimate, gasPriceEstimate, startTime + delay, duration, initialRateBump],
+        ['uint8', 'uint24', 'uint32', 'uint32', 'uint24', 'uint24'],
+        [flags, gasBumpEstimate, gasPriceEstimate, startTime + delay, duration, initialRateBump],
     );
+    if (orderRegistrator) {
+        details += trim0x(ethers.solidityPacked(['address'], [orderRegistrator]));
+    }
     details += trim0x(ethers.solidityPacked(['uint8'], [points.length]));
     for (let i = 0; i < points.length; i++) {
         details += trim0x(ethers.solidityPacked(['uint24', 'uint16'], [points[i][0], points[i][1]]));
     }
-    return { gasBumpEstimate, gasPriceEstimate, startTime, duration, delay, initialRateBump, details };
+    return { gasBumpEstimate, gasPriceEstimate, startTime, duration, delay, initialRateBump, orderRegistrator, details };
 }
 
 function buildSettlementExtensions({

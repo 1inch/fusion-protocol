@@ -715,6 +715,162 @@ describe('Settlement', function () {
             await expect(txn).to.changeTokenBalances(weth, [owner, alice], [ether('-0.105'), ether('0.105')]);
         });
 
+        describe('registered auction start', function () {
+            it('starts auction from registeredAt when it is later than signed start', async function () {
+                const base = await loadFixture(initContractsForSettlement);
+                const registrator = await deployContract('OrderRegistratorMock');
+                const signedStart = await time.latest() - 1000; // auction would already be finished
+                const setupData = {
+                    ...base,
+                    auction: await buildAuctionDetails({
+                        startTime: signedStart,
+                        duration: 900,
+                        initialRateBump: 1000000n,
+                        orderRegistrator: await registrator.getAddress(),
+                    }),
+                };
+                const {
+                    contracts: { dai, weth, lopv4, resolver },
+                    accounts: { owner, alice },
+                    others: { abiCoder },
+                } = setupData;
+
+                const resolverCalldata = abiCoder.encode(
+                    ['address[]', 'bytes[]'],
+                    [
+                        [await weth.getAddress()],
+                        [
+                            weth.interface.encodeFunctionData('transferFrom', [
+                                owner.address,
+                                await resolver.getAddress(),
+                                ether('0.11'),
+                            ]),
+                        ],
+                    ],
+                );
+
+                const { calldata: fillOrderToData, order } = await buildCalldataForOrder({
+                    orderData: {
+                        maker: alice.address,
+                        makerAsset: await dai.getAddress(),
+                        takerAsset: await weth.getAddress(),
+                        makingAmount: ether('100'),
+                        takingAmount: ether('0.1'),
+                        makerTraits: buildMakerTraits(),
+                    },
+                    orderSigner: alice,
+                    setupData,
+                    threshold: ether('100'),
+                    additionalDataForSettlement: resolverCalldata,
+                    isInnermostOrder: true,
+                    isMakingAmount: false,
+                    fillingAmount: ether('0.11'),
+                    returnOrder: true,
+                });
+
+                const orderHash = await lopv4.hashOrder(order);
+                const registeredAt = await time.latest() + 10;
+                await registrator.setRegisteredAt(orderHash, registeredAt);
+
+                await weth.approve(resolver, ether('0.11'));
+                await time.setNextBlockTimestamp(registeredAt);
+                const txn = await resolver.settleOrders(fillOrderToData);
+                await expect(txn).to.changeTokenBalances(dai, [resolver, alice], [ether('100'), ether('-100')]);
+                await expect(txn).to.changeTokenBalances(weth, [owner, alice], [ether('-0.11'), ether('0.11')]);
+            });
+
+            it('keeps signed start when registeredAt is earlier', async function () {
+                const base = await loadFixture(initContractsForSettlement);
+                const registrator = await deployContract('OrderRegistratorMock');
+                const signedStart = await time.latest() + 100;
+                const setupData = {
+                    ...base,
+                    auction: await buildAuctionDetails({
+                        startTime: signedStart,
+                        delay: 0,
+                        duration: 900,
+                        initialRateBump: 1000000n,
+                        orderRegistrator: await registrator.getAddress(),
+                    }),
+                };
+                const {
+                    contracts: { dai, weth, lopv4, resolver },
+                    accounts: { owner, alice },
+                    others: { abiCoder },
+                } = setupData;
+
+                const resolverCalldata = abiCoder.encode(
+                    ['address[]', 'bytes[]'],
+                    [
+                        [await weth.getAddress()],
+                        [
+                            weth.interface.encodeFunctionData('transferFrom', [
+                                owner.address,
+                                await resolver.getAddress(),
+                                ether('0.11'),
+                            ]),
+                        ],
+                    ],
+                );
+
+                const { calldata: fillOrderToData, order } = await buildCalldataForOrder({
+                    orderData: {
+                        maker: alice.address,
+                        makerAsset: await dai.getAddress(),
+                        takerAsset: await weth.getAddress(),
+                        makingAmount: ether('100'),
+                        takingAmount: ether('0.1'),
+                        makerTraits: buildMakerTraits(),
+                    },
+                    orderSigner: alice,
+                    setupData,
+                    threshold: ether('100'),
+                    additionalDataForSettlement: resolverCalldata,
+                    isInnermostOrder: true,
+                    isMakingAmount: false,
+                    fillingAmount: ether('0.11'),
+                    returnOrder: true,
+                });
+
+                const orderHash = await lopv4.hashOrder(order);
+                await registrator.setRegisteredAt(orderHash, signedStart - 50);
+
+                await weth.approve(resolver, ether('0.11'));
+                await time.setNextBlockTimestamp(signedStart);
+                const txn = await resolver.settleOrders(fillOrderToData);
+                await expect(txn).to.changeTokenBalances(dai, [resolver, alice], [ether('100'), ether('-100')]);
+                await expect(txn).to.changeTokenBalances(weth, [owner, alice], [ether('-0.11'), ether('0.11')]);
+            });
+
+            it('uses signed start when order is not registered', async function () {
+                const base = await loadFixture(initContractsForSettlement);
+                const registrator = await deployContract('OrderRegistratorMock');
+                const setupData = {
+                    ...base,
+                    auction: await buildAuctionDetails({
+                        startTime: await time.latest() + 10,
+                        delay: 60,
+                        initialRateBump: 1000000n,
+                        orderRegistrator: await registrator.getAddress(),
+                    }),
+                };
+                const {
+                    contracts: { dai, weth, resolver },
+                    accounts: { owner, alice },
+                } = setupData;
+
+                const fillOrderToData = await prepareSingleOrder({
+                    setupData,
+                    targetTakingAmount: ether('0.11'),
+                });
+
+                await time.setNextBlockTimestamp(setupData.auction.startTime);
+                const txn = await resolver.settleOrders(fillOrderToData);
+                await expect(txn).to.changeTokenBalances(dai, [resolver, alice], [ether('100'), ether('-100')]);
+                await expect(txn).to.changeTokenBalances(weth, [owner, alice], [ether('-0.11'), ether('0.11')]);
+            });
+        });
+
         describe('checking surplus', async function () {
             it('should get surplus', async function () {
                 const setupData = {

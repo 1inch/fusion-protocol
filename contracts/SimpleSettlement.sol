@@ -6,6 +6,7 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { IOrderMixin } from "@1inch/limit-order-protocol-contract/contracts/interfaces/IOrderMixin.sol";
 import { FeeTaker } from "@1inch/limit-order-protocol-contract/contracts/extensions/FeeTaker.sol";
+import { IOrderRegistrator } from "./interfaces/IOrderRegistrator.sol";
 
 /**
  * @title Simple Settlement contract
@@ -16,6 +17,8 @@ contract SimpleSettlement is FeeTaker {
 
     uint256 private constant _BASE_POINTS = 10_000_000; // 100%
     uint256 private constant _GAS_PRICE_BASE = 1_000_000; // 1000 means 1 Gwei
+    /// @dev Highest bit of auction flags: start = max(auctionStartTime, OrderRegistrator.registeredAt).
+    uint256 private constant _USE_REGISTERED_AUCTION_START_FLAG = 1 << 7;
 
     error AllowedTimeViolation();
     error InvalidProtocolSurplusFee();
@@ -81,7 +84,7 @@ contract SimpleSettlement is FeeTaker {
         uint256 remainingMakingAmount,
         bytes calldata extraData
     ) internal view override returns (uint256) {
-        (uint256 rateBump, bytes calldata tail) = _getRateBump(extraData);
+        (uint256 rateBump, bytes calldata tail) = _getRateBump(orderHash, extraData);
         return Math.mulDiv(
             super._getMakingAmount(order, extension, orderHash, taker, takingAmount, remainingMakingAmount, tail),
             _BASE_POINTS,
@@ -101,7 +104,7 @@ contract SimpleSettlement is FeeTaker {
         uint256 remainingMakingAmount,
         bytes calldata extraData
     ) internal view override returns (uint256) {
-        (uint256 rateBump, bytes calldata tail) = _getRateBump(extraData);
+        (uint256 rateBump, bytes calldata tail) = _getRateBump(orderHash, extraData);
         return Math.mulDiv(
             super._getTakingAmount(order, extension, orderHash, taker, makingAmount, remainingMakingAmount, tail),
             _BASE_POINTS + rateBump,
@@ -151,29 +154,44 @@ contract SimpleSettlement is FeeTaker {
      * @dev Parses auction rate bump data from the `auctionDetails` field.
      * `gasBumpEstimate` and `gasPriceEstimate` are used to estimate the transaction costs
      * which are then offset from the auction rate bump.
+     * @param orderHash The hash of the order.
      * @param auctionDetails AuctionDetails is a tightly packed struct of the following format:
      * ```
      * struct AuctionDetails {
+     *     bytes1 flags;
      *     bytes3 gasBumpEstimate;
      *     bytes4 gasPriceEstimate;
      *     bytes4 auctionStartTime;
      *     bytes3 auctionDuration;
      *     bytes3 initialRateBump;
+     *     bytes20 orderRegistrator; // only when _USE_REGISTERED_AUCTION_START_FLAG is set
      *     (bytes3,bytes2)[N] pointsAndTimeDeltas;
      * }
      * ```
      * @return rateBump The rate bump.
      * @return Remaining calldata after parsing auction data.
      */
-    function _getRateBump(bytes calldata auctionDetails) private view returns (uint256, bytes calldata) {
+    function _getRateBump(bytes32 orderHash, bytes calldata auctionDetails) private view returns (uint256, bytes calldata) {
         unchecked {
-            uint256 gasBumpEstimate = uint24(bytes3(auctionDetails[0:3]));
-            uint256 gasPriceEstimate = uint32(bytes4(auctionDetails[3:7]));
+            uint256 flags = uint8(auctionDetails[0]);
+            uint256 gasBumpEstimate = uint24(bytes3(auctionDetails[1:4]));
+            uint256 gasPriceEstimate = uint32(bytes4(auctionDetails[4:8]));
             uint256 gasBump = gasBumpEstimate == 0 || gasPriceEstimate == 0 ? 0 : gasBumpEstimate * block.basefee / gasPriceEstimate / _GAS_PRICE_BASE;
-            uint256 auctionStartTime = uint32(bytes4(auctionDetails[7:11]));
-            uint256 auctionFinishTime = auctionStartTime + uint24(bytes3(auctionDetails[11:14]));
-            uint256 initialRateBump = uint24(bytes3(auctionDetails[14:17]));
-            (uint256 auctionBump, bytes calldata tail) = _getAuctionBump(auctionStartTime, auctionFinishTime, initialRateBump, auctionDetails[17:]);
+            uint256 auctionStartTime = uint32(bytes4(auctionDetails[8:12]));
+            uint256 auctionDuration = uint24(bytes3(auctionDetails[12:15]));
+            uint256 initialRateBump = uint24(bytes3(auctionDetails[15:18]));
+            bytes calldata pointsAndTimeDeltas;
+            if (flags & _USE_REGISTERED_AUCTION_START_FLAG != 0) {
+                uint256 registeredAt = IOrderRegistrator(address(bytes20(auctionDetails[18:38]))).registeredAt(orderHash);
+                if (registeredAt > auctionStartTime) {
+                    auctionStartTime = registeredAt;
+                }
+                pointsAndTimeDeltas = auctionDetails[38:];
+            } else {
+                pointsAndTimeDeltas = auctionDetails[18:];
+            }
+            uint256 auctionFinishTime = auctionStartTime + auctionDuration;
+            (uint256 auctionBump, bytes calldata tail) = _getAuctionBump(auctionStartTime, auctionFinishTime, initialRateBump, pointsAndTimeDeltas);
             return (auctionBump > gasBump ? auctionBump - gasBump : 0, tail);
         }
     }

@@ -78,11 +78,13 @@ It ships the contract sources, the interfaces, and the order-building helpers in
 
 ## Deployments
 
-Addresses and ABIs for every network are committed under [`deployments/`](deployments).
+Addresses and ABIs are committed under [`deployments/`](deployments) for every network below except the three most recent ones — Cronos, Monad and HyperEVM — whose artifacts have not landed in the repository yet.
 
 ### Settlement
 
-Because the contract is deployed through a CREATE3 deployer, the settlement address is the same on every chain except zkSync Era, which does not support CREATE3. Ethereum mainnet runs `Settlement`, the variant with the priority fee cap; every other chain runs `SimpleSettlement`.
+Deployment goes through a CREATE3 deployer, so the address depends on the salt rather than on the chain, and the same address is reused across a whole rollout. The original rollout shares one address across fourteen networks, the recent Cronos, Monad and HyperEVM deployments share another, and zkSync Era stands alone because it does not support CREATE3.
+
+Ethereum mainnet runs `Settlement`, the variant with the priority fee cap; every other chain runs `SimpleSettlement`.
 
 | Network | Chain ID | Contract | Address |
 | --- | --- | --- | --- |
@@ -92,10 +94,13 @@ Because the contract is deployed through a CREATE3 deployer, the settlement addr
 | Avalanche | 43114 | `SimpleSettlement` | [0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5](https://snowtrace.io/address/0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5) |
 | Base | 8453 | `SimpleSettlement` | [0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5](https://basescan.org/address/0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5) |
 | BNB Chain | 56 | `SimpleSettlement` | [0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5](https://bscscan.com/address/0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5) |
+| Cronos | 25 | `SimpleSettlement` | [0x65497E56Cf49c51f1c1d54dc9005a7b38B98B30F](https://cronoscan.com/address/0x65497E56Cf49c51f1c1d54dc9005a7b38B98B30F) |
 | Fantom | 250 | `SimpleSettlement` | [0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5](https://explorer.fantom.network/address/0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5) |
 | Gnosis Chain | 100 | `SimpleSettlement` | [0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5](https://gnosisscan.io/address/0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5) |
+| HyperEVM | 999 | `SimpleSettlement` | [0x65497E56Cf49c51f1c1d54dc9005a7b38B98B30F](https://hyperevmscan.io/address/0x65497E56Cf49c51f1c1d54dc9005a7b38B98B30F) |
 | Kaia (Klaytn) | 8217 | `SimpleSettlement` | [0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5](https://kaiascan.io/address/0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5) |
 | Linea | 59144 | `SimpleSettlement` | [0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5](https://lineascan.build/address/0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5) |
+| Monad | 143 | `SimpleSettlement` | [0x65497E56Cf49c51f1c1d54dc9005a7b38B98B30F](https://monadscan.com/address/0x65497E56Cf49c51f1c1d54dc9005a7b38B98B30F) |
 | Optimism | 10 | `SimpleSettlement` | [0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5](https://optimistic.etherscan.io/address/0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5) |
 | Polygon | 137 | `SimpleSettlement` | [0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5](https://polygonscan.com/address/0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5) |
 | Sonic | 146 | `SimpleSettlement` | [0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5](https://sonicscan.org/address/0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5) |
@@ -104,7 +109,7 @@ Because the contract is deployed through a CREATE3 deployer, the settlement addr
 
 ### Other contracts
 
-`KycNFT`, the access token passed to every settlement deployment, follows the same pattern: `0xAccE550000863572B867E661647CD7D97b72C507` on all of the chains listed above ([mainnet](https://etherscan.io/address/0xAccE550000863572B867E661647CD7D97b72C507)), and [0x46B64318C4f764F6Fe81dFd1F26282A52E0f1680](https://explorer.zksync.io/address/0x46B64318C4f764F6Fe81dFd1F26282A52E0f1680) on zkSync Era.
+`KycNFT`, the access token passed to the settlement constructor, follows the same pattern: `0xAccE550000863572B867E661647CD7D97b72C507` on every network recorded in `deployments/` ([mainnet](https://etherscan.io/address/0xAccE550000863572B867E661647CD7D97b72C507)), except zkSync Era, where it is [0x46B64318C4f764F6Fe81dFd1F26282A52E0f1680](https://explorer.zksync.io/address/0x46B64318C4f764F6Fe81dFd1F26282A52E0f1680).
 
 The registries and the staking pod exist on Ethereum mainnet only:
 

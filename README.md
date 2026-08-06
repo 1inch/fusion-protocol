@@ -78,17 +78,46 @@ It ships the contract sources, the interfaces, and the order-building helpers in
 
 ## Deployments
 
-Addresses and ABIs for every network are committed under [`deployments/`](deployments), currently covering Ethereum mainnet, Arbitrum, Aurora, Avalanche, Base, BNB Chain, Fantom, Gnosis Chain, Klaytn, Linea, Optimism, Polygon, Sonic, Unichain and zkSync Era.
+Addresses and ABIs are committed under [`deployments/`](deployments) for every network below except the three most recent ones — Cronos, Monad and HyperEVM — whose artifacts have not landed in the repository yet.
 
-Mainnet, as recorded in [`deployments/mainnet`](deployments/mainnet):
+### Settlement
+
+Deployment goes through a CREATE3 deployer, so the address depends on the salt rather than on the chain, and the same address is reused across a whole rollout. The original rollout shares one address across fourteen networks, the recent Cronos, Monad and HyperEVM deployments share another, and zkSync Era stands alone because it does not support CREATE3.
+
+Ethereum mainnet runs `Settlement`, the variant with the priority fee cap; every other chain runs `SimpleSettlement`.
+
+| Network | Chain ID | Contract | Address |
+| --- | --- | --- | --- |
+| Ethereum | 1 | `Settlement` | [0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5](https://etherscan.io/address/0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5) |
+| Arbitrum One | 42161 | `SimpleSettlement` | [0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5](https://arbiscan.io/address/0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5) |
+| Aurora | 1313161554 | `SimpleSettlement` | [0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5](https://explorer.aurora.dev/address/0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5) |
+| Avalanche | 43114 | `SimpleSettlement` | [0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5](https://snowtrace.io/address/0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5) |
+| Base | 8453 | `SimpleSettlement` | [0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5](https://basescan.org/address/0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5) |
+| BNB Chain | 56 | `SimpleSettlement` | [0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5](https://bscscan.com/address/0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5) |
+| Cronos | 25 | `SimpleSettlement` | [0x65497E56Cf49c51f1c1d54dc9005a7b38B98B30F](https://cronoscan.com/address/0x65497E56Cf49c51f1c1d54dc9005a7b38B98B30F) |
+| Fantom | 250 | `SimpleSettlement` | [0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5](https://explorer.fantom.network/address/0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5) |
+| Gnosis Chain | 100 | `SimpleSettlement` | [0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5](https://gnosisscan.io/address/0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5) |
+| HyperEVM | 999 | `SimpleSettlement` | [0x65497E56Cf49c51f1c1d54dc9005a7b38B98B30F](https://hyperevmscan.io/address/0x65497E56Cf49c51f1c1d54dc9005a7b38B98B30F) |
+| Kaia (Klaytn) | 8217 | `SimpleSettlement` | [0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5](https://kaiascan.io/address/0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5) |
+| Linea | 59144 | `SimpleSettlement` | [0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5](https://lineascan.build/address/0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5) |
+| Monad | 143 | `SimpleSettlement` | [0x65497E56Cf49c51f1c1d54dc9005a7b38B98B30F](https://monadscan.com/address/0x65497E56Cf49c51f1c1d54dc9005a7b38B98B30F) |
+| Optimism | 10 | `SimpleSettlement` | [0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5](https://optimistic.etherscan.io/address/0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5) |
+| Polygon | 137 | `SimpleSettlement` | [0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5](https://polygonscan.com/address/0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5) |
+| Sonic | 146 | `SimpleSettlement` | [0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5](https://sonicscan.org/address/0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5) |
+| Unichain | 130 | `SimpleSettlement` | [0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5](https://uniscan.xyz/address/0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5) |
+| zkSync Era | 324 | `SimpleSettlement` | [0x8261425Bf01CAf25259dAbE36FD05F430b38AEe0](https://explorer.zksync.io/address/0x8261425Bf01CAf25259dAbE36FD05F430b38AEe0) |
+
+### Other contracts
+
+`KycNFT`, the access token passed to the settlement constructor, follows the same pattern: `0xAccE550000863572B867E661647CD7D97b72C507` on every network recorded in `deployments/` ([mainnet](https://etherscan.io/address/0xAccE550000863572B867E661647CD7D97b72C507)), except zkSync Era, where it is [0x46B64318C4f764F6Fe81dFd1F26282A52E0f1680](https://explorer.zksync.io/address/0x46B64318C4f764F6Fe81dFd1F26282A52E0f1680).
+
+The registries and the staking pod exist on Ethereum mainnet only:
 
 | Contract | Address |
 | --- | --- |
-| Settlement | [0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5](https://etherscan.io/address/0x2Ad5004c60e16E54d5007C80CE329Adde5B51Ef5) |
 | WhitelistRegistry | [0xcb8308fcB7BC2f84ed1bEa2C016991D34de5cc77](https://etherscan.io/address/0xcb8308fcB7BC2f84ed1bEa2C016991D34de5cc77) |
 | CrosschainWhitelistRegistry | [0xBe89346fE1cE1367f3d80C8522209A86511B1201](https://etherscan.io/address/0xBe89346fE1cE1367f3d80C8522209A86511B1201) |
 | PowerPod | [0xAccfAc2339e16DC80c50d2fa81b5c2B049B4f947](https://etherscan.io/address/0xAccfAc2339e16DC80c50d2fa81b5c2B049B4f947) |
-| KycNFT | [0xAccE550000863572B867E661647CD7D97b72C507](https://etherscan.io/address/0xAccE550000863572B867E661647CD7D97b72C507) |
 | ResolverMetadata | [0xBF4543819ECede56220bcB1e8C1BBa9Ef290a58a](https://etherscan.io/address/0xBF4543819ECede56220bcB1e8C1BBa9Ef290a58a) |
 
 Deployments go through the [`Makefile`](Makefile), which validates the required parameters, records them in `config/constants.json` and then runs the matching `hardhat-deploy` script. Run `make help` for the full list of targets.

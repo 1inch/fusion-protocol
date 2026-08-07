@@ -5,6 +5,7 @@ module.exports = {
     ACCESS_TOKEN_OWNER: constants.accessTokenOwner || {},
     CREATE3_DEPLOYERS: constants.create3Deployers || {},
     SETTLEMENT_SALT: constants.settlementSalt || {},
+    FUSION_ANCHORED_AUCTION_SALT: constants.fusionAnchoredAuctionSalt || {},
     SETTLEMENT_OWNER_ADDRESS: constants.settlementOwnerAddress || {},
     ACCESS_TOKEN_ADDRESS: constants.accessTokenAddress || {},
     WETH: constants.weth || {},

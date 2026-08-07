@@ -1,9 +1,9 @@
 const hre = require('hardhat');
-const { deployAndGetContract } = require('@1inch/solidity-utils');
+const { deployAndGetContractWithCreate3, deployAndGetContract } = require('@1inch/solidity-utils');
 const constants = require('../config/constants');
-const { getChainId } = hre;
+const { getChainId, ethers } = hre;
 
-module.exports = async ({ getNamedAccounts, deployments }) => {
+module.exports = async ({ getNamedAccounts, deployments, config }) => {
     const networkName = hre.network.name;
     console.log(`running ${networkName} deploy script`);
     const chainId = await getChainId();
@@ -18,6 +18,11 @@ module.exports = async ({ getNamedAccounts, deployments }) => {
         return;
     }
 
+    let DEPLOYMENT_METHOD = config.deployOpts?.deploymentMethod || 'create3';
+    if (networkName.indexOf('zksync') !== -1) { // create3 is not supported for zksync
+        DEPLOYMENT_METHOD = 'create';
+    }
+
     // The OrderRegistrator with the announcedAt view (limit-order-protocol#435) is not deployed yet;
     // fill config/constants.json once it is.
     const orderRegistrator = constants.ORDER_REGISTRATOR_ADDRESS[chainId];
@@ -25,15 +30,42 @@ module.exports = async ({ getNamedAccounts, deployments }) => {
         throw new Error(`orderRegistratorAddress is not set for chain ${chainId} in config/constants.json`);
     }
 
-    const { deployer } = await getNamedAccounts();
+    const constructorArgs = [orderRegistrator];
 
-    await deployAndGetContract({
-        contractName: 'FusionAnchoredAuction',
-        constructorArgs: [orderRegistrator],
-        deployments,
-        deployer,
-        skipVerify: process.env.OPS_SKIP_VERIFY === 'true',
-    });
+    const deploymentName = 'FusionAnchoredAuction';
+    const contractName = 'FusionAnchoredAuction';
+
+    if (DEPLOYMENT_METHOD === 'create3') {
+        let salt = constants.FUSION_ANCHORED_AUCTION_SALT[chainId];
+        if (!salt) {
+            throw new Error(`fusionAnchoredAuctionSalt is not set for chain ${chainId} in config/constants.json`);
+        }
+        salt = salt.startsWith('0x') ? salt : ethers.keccak256(ethers.toUtf8Bytes(salt));
+
+        console.log(`Using salt: ${salt}`);
+
+        // Deploy with create3
+        await deployAndGetContractWithCreate3({
+            contractName,
+            deploymentName,
+            constructorArgs,
+            create3Deployer: constants.CREATE3_DEPLOYERS[chainId],
+            salt,
+            deployments,
+            skipVerify: process.env.OPS_SKIP_VERIFY === 'true',
+        });
+    } else {
+        // Deploy on zkSync-like networks without create3
+        const { deployer } = await getNamedAccounts();
+        await deployAndGetContract({
+            contractName,
+            deploymentName,
+            constructorArgs,
+            deployments,
+            deployer,
+            skipVerify: process.env.OPS_SKIP_VERIFY === 'true',
+        });
+    }
 };
 
 module.exports.skip = async () => true;

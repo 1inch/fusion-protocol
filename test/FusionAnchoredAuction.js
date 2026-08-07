@@ -12,7 +12,9 @@ const {
     buildLegacyAuctionDetails,
     buildAnchoredAuctionDetails,
     buildAnchoredExclusivity,
+    fillPremiumAt,
     takingAmountFor,
+    makingAmountFor,
 } = require('./helpers/anchoredAuction');
 
 const HALF_PERCENT = 50_000n; // 0.5% in 1e7
@@ -162,6 +164,49 @@ describe('FusionAnchoredAuction', function () {
             expect(await weth.balanceOf(maker)).to.equal(expected);
             expect(await dai.balanceOf(taker)).to.equal(MAKING_AMOUNT);
             expect(await registrator.announcedAt(await lopv4.hashOrder(order))).to.equal(await time.latest());
+        });
+
+        it('handles every optional field at once, in both fill directions', async function () {
+            const { dai, weth, lopv4, chainId, registrator, auction } = await loadFixture(deployContractsAndInit);
+
+            const params = {
+                startTime: 0,
+                duration: 100,
+                initialRateBump: Number(HALF_PERCENT),
+                anchored: true,
+                fillPremiums: { initial: Number(HALF_PERCENT), points: [] },
+            };
+            const order = await buildAuctionOrder({
+                dai,
+                weth,
+                auction,
+                auctionDetails: buildAnchoredAuctionDetails(params),
+                // The fill-by deadline rides in the post-interaction blob: an anchored exclusivity with
+                // an empty whitelist is exactly "a deadline without exclusivity".
+                exclusivity: buildAnchoredExclusivity({ allowedTimeDelay: 0, announcementDeadlineDelay: 160, whitelist: [] }),
+            });
+            const sig = await signature(order, chainId, lopv4);
+            const announcedAt = await announce(registrator, order);
+            const resolved = { ...params, startTime: announcedAt };
+
+            // A fill by making amount halfway through the anchored auction, its curve premium on top.
+            const firstFillTime = announcedAt + 50;
+            await time.setNextBlockTimestamp(firstFillTime);
+            const firstExpected = takingAmountFor(order, resolved, firstFillTime, MAKING_AMOUNT / 2n, MAKING_AMOUNT);
+            expect(firstExpected).to.equal(ceilDiv((TAKING_AMOUNT / 2n) * (BASE_POINTS + HALF_PERCENT), BASE_POINTS));
+            await expect(fill(lopv4, order, sig, MAKING_AMOUNT / 2n)).to.changeTokenBalances(weth, [taker, maker], [-firstExpected, firstExpected]);
+
+            // A fill by taking amount after the auction, priced through the conservative estimate.
+            const secondFillTime = announcedAt + 120;
+            await time.setNextBlockTimestamp(secondFillTime);
+            const takingAmount = TAKING_AMOUNT / 10n;
+            const secondExpected = makingAmountFor(order, resolved, secondFillTime, takingAmount, MAKING_AMOUNT / 2n);
+            await expect(fill(lopv4, order, sig, takingAmount, { byMakingAmount: false }))
+                .to.changeTokenBalances(dai, [taker, maker], [secondExpected, -secondExpected]);
+
+            // And past the anchored deadline nothing fills at all.
+            await time.setNextBlockTimestamp(announcedAt + 160 + 1);
+            await expect(fill(lopv4, order, sig, MAKING_AMOUNT / 10n)).to.be.revertedWithCustomError(auction, 'AuctionExpired');
         });
 
         it('gives a slow announcement the same curve a prompt one gets', async function () {
@@ -388,6 +433,314 @@ describe('FusionAnchoredAuction', function () {
             await expect(fill(lopv4, order, sig, MAKING_AMOUNT))
                 .to.emit(customExtension, 'CustomPostInteractionData')
                 .withArgs('0xdeadbeef');
+        });
+    });
+
+    describe('fill-priced by a matrix of rates', function () {
+        // The quote's matrix for 1/10 … 10/10 of the amount, expressed as the premium each size pays over
+        // the rate for the full amount. Deliberately convex, the shape a depth-based quote produces and the
+        // linear rule cannot: small sizes are worth far more per unit than mid sizes.
+        const MATRIX = [400_000, 250_000, 160_000, 105_000, 70_000, 45_000, 26_000, 12_000, 4_000, 0];
+        const FILL_PREMIUMS = {
+            initial: 500_000, // 5% for a vanishing fill
+            // Nine points at each decile up to 9/10; the implied final point is zero premium at a full sweep.
+            points: MATRIX.slice(0, 9).map((premium) => ({ premium, shareDelta: 1000 })),
+        };
+
+        after(async function () {
+            await hre.network.provider.send('hardhat_setNextBlockBaseFeePerGas', ['0x1']);
+        });
+
+        async function deployMatrixOrder(extra = {}) {
+            const contracts = await loadFixture(deployContractsAndInit);
+            const { dai, weth, lopv4, chainId, auction } = contracts;
+            const startTime = await time.latest() + 10;
+            const params = { startTime, duration: 100, initialRateBump: Number(HALF_PERCENT), fillPremiums: FILL_PREMIUMS, ...extra };
+            const order = await buildAuctionOrder({ dai, weth, auction, auctionDetails: buildAnchoredAuctionDetails(params) });
+            const sig = await signature(order, chainId, lopv4);
+            return { ...contracts, order, sig, params, afterAuction: startTime + 200 };
+        }
+
+        it('prices every decile exactly at its matrix row', async function () {
+            const { lopv4, auction, order, params, afterAuction } = await deployMatrixOrder();
+
+            await time.setNextBlockTimestamp(afterAuction);
+            await hre.network.provider.send('evm_mine');
+
+            const orderHash = await lopv4.hashOrder(order);
+            const extraData = buildAnchoredAuctionDetails(params);
+            for (let decile = 1; decile <= 10; decile++) {
+                const makingAmount = MAKING_AMOUNT * BigInt(decile) / 10n;
+                const taking = await auction.getTakingAmount(order, order.extension, orderHash, taker.address, makingAmount, MAKING_AMOUNT, extraData);
+                const expectedBump = BigInt(MATRIX[decile - 1]);
+                expect(taking).to.equal(ceilDiv(ceilDiv(TAKING_AMOUNT * BigInt(decile), 10n) * (BASE_POINTS + expectedBump), BASE_POINTS));
+            }
+        });
+
+        it('prices successive fills by their share of what remains', async function () {
+            const { weth, lopv4, order, sig, params, afterAuction } = await deployMatrixOrder();
+
+            // Every fill sees the remainder as a fresh ladder: the first tenth is a 10% slice of a whole
+            // order, the next tenth is a 10/90 slice of what is left, and so on — each priced by its own
+            // share of the remainder rather than by where it lands on the original amount.
+            let fillTime = afterAuction;
+            let remaining = MAKING_AMOUNT;
+            for (let i = 0; i < 3; i++) {
+                await time.setNextBlockTimestamp(fillTime);
+                const expected = takingAmountFor(order, params, fillTime, MAKING_AMOUNT / 10n, remaining);
+                const share = (MAKING_AMOUNT / 10n) * 10000n / remaining;
+                const interpolated = (share - 1000n) * BigInt(MATRIX[1]) + (2000n - share) * BigInt(MATRIX[0]);
+                const premium = i === 0 ? BigInt(MATRIX[0]) : interpolated / 1000n;
+                expect(expected).to.equal(ceilDiv((TAKING_AMOUNT / 10n) * (BASE_POINTS + premium), BASE_POINTS));
+                await expect(fill(lopv4, order, sig, MAKING_AMOUNT / 10n))
+                    .to.changeTokenBalances(weth, [taker, maker], [-expected, expected]);
+                remaining -= MAKING_AMOUNT / 10n;
+                fillTime++;
+            }
+        });
+
+        it('charges a late small fill by its share of the remainder, not its place on the original', async function () {
+            const { weth, lopv4, order, sig, params, afterAuction } = await deployMatrixOrder();
+
+            // With 80% already filled, a fill of 10% of the original order is half of what remains, so it
+            // prices at the 5/10 row — not at the nearly-free 9/10 row its cumulative end would land on.
+            await time.setNextBlockTimestamp(afterAuction);
+            await fill(lopv4, order, sig, MAKING_AMOUNT * 8n / 10n);
+
+            const fillTime = afterAuction + 1;
+            await time.setNextBlockTimestamp(fillTime);
+            const remaining = MAKING_AMOUNT * 2n / 10n;
+            const expected = takingAmountFor(order, params, fillTime, MAKING_AMOUNT / 10n, remaining);
+            expect(expected).to.equal(ceilDiv((TAKING_AMOUNT / 10n) * (BASE_POINTS + BigInt(MATRIX[4])), BASE_POINTS));
+            await expect(fill(lopv4, order, sig, MAKING_AMOUNT / 10n))
+                .to.changeTokenBalances(weth, [taker, maker], [-expected, expected]);
+        });
+
+        it('interpolates between matrix rows instead of stepping', async function () {
+            const { weth, lopv4, order, sig, params, afterAuction } = await deployMatrixOrder();
+
+            await time.setNextBlockTimestamp(afterAuction);
+            const makingAmount = MAKING_AMOUNT * 15n / 100n; // halfway between the 1/10 and 2/10 rows
+            const fillTx = fill(lopv4, order, sig, makingAmount);
+
+            const expected = takingAmountFor(order, params, afterAuction, makingAmount, MAKING_AMOUNT);
+            const midRowBump = BigInt(MATRIX[0] + MATRIX[1]) / 2n;
+            expect(expected).to.equal(ceilDiv(ceilDiv(TAKING_AMOUNT * 15n, 100n) * (BASE_POINTS + midRowBump), BASE_POINTS));
+            await expect(fillTx).to.changeTokenBalances(weth, [taker, maker], [-expected, expected]);
+        });
+
+        it('interpolates past the last row toward zero at completion', async function () {
+            const { lopv4, auction, order, params, afterAuction } = await deployMatrixOrder();
+
+            await time.setNextBlockTimestamp(afterAuction);
+            await hre.network.provider.send('evm_mine');
+
+            // The last explicit row sits at 9/10; a fill ending at 95% lands on the implied final segment,
+            // halfway between that row and the zero premium of completion.
+            const makingAmount = MAKING_AMOUNT * 95n / 100n;
+            const taking = await auction.getTakingAmount(
+                order, order.extension, await lopv4.hashOrder(order), taker.address, makingAmount, MAKING_AMOUNT, buildAnchoredAuctionDetails(params),
+            );
+            const halfLastRow = BigInt(MATRIX[8]) / 2n;
+            expect(taking).to.equal(ceilDiv(ceilDiv(TAKING_AMOUNT * 95n, 100n) * (BASE_POINTS + halfLastRow), BASE_POINTS));
+        });
+
+        it('offsets the gas bump from the matrix premium', async function () {
+            const contracts = await loadFixture(deployContractsAndInit);
+            const { dai, weth, lopv4, chainId, auction } = contracts;
+
+            const startTime = await time.latest() + 10;
+            const baseFee = 1000000000n; // 1 gwei, exactly the estimate below
+            const params = {
+                startTime,
+                duration: 100,
+                initialRateBump: Number(HALF_PERCENT),
+                fillPremiums: FILL_PREMIUMS,
+                gasBumpEstimate: Number(HALF_PERCENT * 4n), // 2%
+                gasPriceEstimate: 1000,
+            };
+            const order = await buildAuctionOrder({ dai, weth, auction, auctionDetails: buildAnchoredAuctionDetails(params) });
+            const sig = await signature(order, chainId, lopv4);
+
+            // After the auction the first decile carries the 4% row, and the 2% gas bump comes off it.
+            await hre.network.provider.send('hardhat_setNextBlockBaseFeePerGas', ['0x' + baseFee.toString(16)]);
+            await time.setNextBlockTimestamp(startTime + 200);
+            const fillTx = fill(lopv4, order, sig, MAKING_AMOUNT / 10n, { overrides: { gasPrice: baseFee * 2n } });
+
+            const expected = ceilDiv((TAKING_AMOUNT / 10n) * (BASE_POINTS + BigInt(MATRIX[0]) - HALF_PERCENT * 4n), BASE_POINTS);
+            await expect(fillTx).to.changeTokenBalances(weth, [taker, maker], [-expected, expected]);
+        });
+
+        it('never lets any split of the order undercut a single sweep', async function () {
+            const { lopv4, auction, order, params, afterAuction } = await deployMatrixOrder();
+            const singleRow = await deployMatrixOrder({ fillPremiums: { initial: Number(HALF_PERCENT), points: [] } });
+
+            await time.setNextBlockTimestamp(afterAuction + 1000);
+            await hre.network.provider.send('evm_mine');
+
+            // A seeded sweep over random partitions, priced through the contract's own view methods: for
+            // both curve shapes, no way of slicing the order may cost less in total than one full sweep.
+            let seed = 0xdead4351n;
+            const nextRand = (bound) => {
+                seed = (seed * 6364136223846793005n + 1442695040888963407n) & ((1n << 64n) - 1n);
+                return seed % bound;
+            };
+
+            for (const { o, p } of [{ o: order, p: params }, { o: singleRow.order, p: singleRow.params }]) {
+                const orderHash = await lopv4.hashOrder(o);
+                const extraData = buildAnchoredAuctionDetails(p);
+                const sweep = await auction.getTakingAmount(o, o.extension, orderHash, taker.address, MAKING_AMOUNT, MAKING_AMOUNT, extraData);
+
+                for (let trial = 0; trial < 8; trial++) {
+                    const chunks = [];
+                    let remaining = MAKING_AMOUNT;
+                    const parts = 2n + nextRand(4n);
+                    for (let i = 1n; i < parts; i++) {
+                        const chunk = 1n + nextRand(remaining - (parts - i));
+                        chunks.push(chunk);
+                        remaining -= chunk;
+                    }
+                    chunks.push(remaining);
+
+                    let total = 0n;
+                    let left = MAKING_AMOUNT;
+                    for (const chunk of chunks) {
+                        total += await auction.getTakingAmount(o, o.extension, orderHash, taker.address, chunk, left, extraData);
+                        left -= chunk;
+                    }
+                    expect(total, `partition ${chunks.join('+')}`).to.be.greaterThanOrEqual(sweep);
+                }
+            }
+        });
+
+        it('adds the matrix premium on top of the running time curve', async function () {
+            const { weth, lopv4, order, sig, params } = await deployMatrixOrder();
+
+            // Halfway through the auction the time curve still carries half the initial bump, and the
+            // 3/10-sized fill pays its matrix row on top of it.
+            const fillTime = params.startTime + 50;
+            await time.setNextBlockTimestamp(fillTime);
+            const makingAmount = MAKING_AMOUNT * 3n / 10n;
+            const fillTx = fill(lopv4, order, sig, makingAmount);
+
+            const expected = takingAmountFor(order, params, fillTime, makingAmount, MAKING_AMOUNT);
+            expect(expected).to.equal(ceilDiv(ceilDiv(TAKING_AMOUNT * 3n, 10n) * (BASE_POINTS + HALF_PERCENT / 2n + BigInt(MATRIX[2])), BASE_POINTS));
+            await expect(fillTx).to.changeTokenBalances(weth, [taker, maker], [-expected, expected]);
+        });
+
+        it('sweeps the remainder at the plain curve price', async function () {
+            const { weth, lopv4, order, sig, afterAuction } = await deployMatrixOrder();
+
+            await time.setNextBlockTimestamp(afterAuction);
+            await fill(lopv4, order, sig, MAKING_AMOUNT * 3n / 5n);
+
+            // Whatever its absolute size, taking everything that is left costs no premium at all.
+            await time.setNextBlockTimestamp(afterAuction + 10);
+            const remainder = MAKING_AMOUNT * 2n / 5n;
+            await expect(fill(lopv4, order, sig, remainder)).to.changeTokenBalances(
+                weth, [taker, maker], [-TAKING_AMOUNT * 2n / 5n, TAKING_AMOUNT * 2n / 5n],
+            );
+        });
+
+        it('prices a fill by taking amount no better than an exact solution would', async function () {
+            const { dai, lopv4, order, sig, params, afterAuction } = await deployMatrixOrder();
+
+            await time.setNextBlockTimestamp(afterAuction);
+            const takingAmount = TAKING_AMOUNT / 4n;
+            const fillTx = fill(lopv4, order, sig, takingAmount, { byMakingAmount: false });
+
+            const expected = makingAmountFor(order, params, afterAuction, takingAmount, MAKING_AMOUNT);
+            await expect(fillTx).to.changeTokenBalances(dai, [taker, maker], [expected, -expected]);
+
+            const exact = (() => {
+                let amount = expected;
+                for (let i = 0; i < 64; i++) {
+                    const rateBump = amount >= MAKING_AMOUNT ? 0n : fillPremiumAt(amount, MAKING_AMOUNT, FILL_PREMIUMS);
+                    amount = (order.makingAmount * takingAmount / order.takingAmount) * BASE_POINTS / (BASE_POINTS + rateBump);
+                }
+                return amount;
+            })();
+            expect(expected).to.be.lessThanOrEqual(exact);
+        });
+
+        it('works alongside anchoring', async function () {
+            const { weth, lopv4, registrator, order, sig, params } = await deployMatrixOrder({
+                startTime: 0,
+                anchored: true,
+            });
+
+            const announcedAt = await announce(registrator, order);
+            const resolved = { ...params, startTime: announcedAt };
+
+            const fillTime = announcedAt + 120; // past the anchored auction
+            await time.setNextBlockTimestamp(fillTime);
+            const makingAmount = MAKING_AMOUNT / 2n;
+            const expected = takingAmountFor(order, resolved, fillTime, makingAmount, MAKING_AMOUNT);
+            expect(expected).to.equal(ceilDiv((TAKING_AMOUNT / 2n) * (BASE_POINTS + BigInt(MATRIX[4])), BASE_POINTS));
+            await expect(fill(lopv4, order, sig, makingAmount)).to.changeTokenBalances(weth, [taker, maker], [-expected, expected]);
+        });
+
+        it('rejects a matrix whose premium rises along the ladder', async function () {
+            // A hump-shaped matrix: mid-sized fills pay the most. It is encodable, but a rising stretch
+            // makes two fills cheaper than their sum — a taker would be paid to split — so pricing off
+            // such a curve reverts instead.
+            const humpPremiums = {
+                initial: 100_000,
+                points: [
+                    { premium: 400_000, shareDelta: 3000 },
+                    { premium: 50_000, shareDelta: 4000 },
+                ],
+            };
+            const { lopv4, auction, order, sig, afterAuction } = await deployMatrixOrder({ fillPremiums: humpPremiums });
+
+            await time.setNextBlockTimestamp(afterAuction);
+            await expect(fill(lopv4, order, sig, MAKING_AMOUNT * 3n / 10n))
+                .to.be.revertedWithCustomError(auction, 'NonMonotonicFillCurve');
+
+            // The taking-amount direction walks the same curve and refuses it the same way.
+            await expect(fill(lopv4, order, sig, TAKING_AMOUNT / 10n, { byMakingAmount: false }))
+                .to.be.revertedWithCustomError(auction, 'NonMonotonicFillCurve');
+        });
+
+        it('rejects a rising first row before any interior point is read', async function () {
+            // The initial premium is the curve's whole prefix for a vanishing fill, so a first row above
+            // it is caught on the very first comparison of the walk.
+            const risingPremiums = { initial: 50_000, points: [{ premium: 100_000, shareDelta: 5000 }] };
+            const { lopv4, auction, order, sig, afterAuction } = await deployMatrixOrder({ fillPremiums: risingPremiums });
+
+            await time.setNextBlockTimestamp(afterAuction);
+            await expect(fill(lopv4, order, sig, MAKING_AMOUNT / 10n))
+                .to.be.revertedWithCustomError(auction, 'NonMonotonicFillCurve');
+        });
+
+        it('validates only the prefix a fill is actually priced on', async function () {
+            // Enforcement is lazy — one comparison per visited point — so a fill priced entirely on the
+            // legal early rows goes through even when a later stretch of the curve is broken, and the
+            // completing fill never reads the curve at all.
+            const brokenTail = {
+                initial: 300_000,
+                points: [
+                    { premium: 200_000, shareDelta: 3000 },
+                    { premium: 400_000, shareDelta: 4000 }, // illegal, but only for fills that reach it
+                ],
+            };
+            const { weth, lopv4, auction, order, sig, params, afterAuction } = await deployMatrixOrder({ fillPremiums: brokenTail });
+
+            await time.setNextBlockTimestamp(afterAuction);
+            const firstAmount = MAKING_AMOUNT * 2n / 10n;
+            const first = takingAmountFor(order, params, afterAuction, firstAmount, MAKING_AMOUNT);
+            await expect(fill(lopv4, order, sig, firstAmount)).to.changeTokenBalances(weth, [taker, maker], [-first, first]);
+
+            // Reaching past the legal prefix hits the rising row and reverts.
+            await time.setNextBlockTimestamp(afterAuction + 10);
+            await expect(fill(lopv4, order, sig, MAKING_AMOUNT * 3n / 10n))
+                .to.be.revertedWithCustomError(auction, 'NonMonotonicFillCurve');
+
+            // Completing the order short-circuits to the plain auction price without walking the curve.
+            await time.setNextBlockTimestamp(afterAuction + 20);
+            const rest = MAKING_AMOUNT - firstAmount;
+            const completing = takingAmountFor(order, params, afterAuction + 20, rest, rest);
+            await expect(fill(lopv4, order, sig, rest)).to.changeTokenBalances(weth, [taker, maker], [-completing, completing]);
         });
     });
 

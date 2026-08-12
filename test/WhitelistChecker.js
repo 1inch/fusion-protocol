@@ -132,7 +132,7 @@ describe('WhitelistChecker', function () {
                 contracts: { dai, weth, accessToken, resolver, settlement },
                 accounts: { alice },
             } = setupData;
-            setupData.auction.startTime = '0xffffffff';
+            setupData.auction.startTime = '0x7fffffff'; // far future, without the top bit that now means an anchored order
 
             weth.transfer(resolver, ether('0.1'));
 
@@ -198,7 +198,7 @@ describe('WhitelistChecker', function () {
                 contracts: { dai, weth, resolver, settlement },
                 accounts: { alice },
             } = setupData;
-            setupData.auction.startTime = '0xffffffff';
+            setupData.auction.startTime = '0x7fffffff'; // far future, without the top bit that now means an anchored order
 
             weth.transfer(resolver, ether('0.1'));
 

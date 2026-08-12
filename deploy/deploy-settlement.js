@@ -23,11 +23,19 @@ module.exports = async ({ getNamedAccounts, deployments, config }) => {
         DEPLOYMENT_METHOD = 'create';
     }
 
+    // The zero address is a deliberate choice: it deploys with anchoring disabled (anchored orders
+    // fail closed) on chains where the registrator does not exist yet. Set it explicitly in config.
+    const orderRegistrator = constants.ORDER_REGISTRATOR_ADDRESS[chainId];
+    if (orderRegistrator === undefined) {
+        throw new Error(`orderRegistratorAddress is not configured for chain ${chainId}`);
+    }
+
     const constructorArgs = [
         constants.ROUTER_V6_ADDRESS[chainId],
         constants.ACCESS_TOKEN_ADDRESS[chainId],
         constants.WETH[chainId],
         constants.SETTLEMENT_OWNER_ADDRESS[chainId],
+        orderRegistrator,
     ];
 
     const deploymentName = 'SimpleSettlement';

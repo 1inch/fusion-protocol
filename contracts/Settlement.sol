@@ -6,6 +6,7 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { IOrderMixin } from "@1inch/limit-order-protocol-contract/contracts/interfaces/IOrderMixin.sol";
 
 import { SimpleSettlement } from "./SimpleSettlement.sol";
+import { IOrderRegistrator } from "./interfaces/IOrderRegistrator.sol";
 
 /**
  * @title Settlement contract
@@ -14,8 +15,8 @@ import { SimpleSettlement } from "./SimpleSettlement.sol";
 contract Settlement is SimpleSettlement {
     error InvalidPriorityFee();
 
-    constructor(address limitOrderProtocol, IERC20 accessToken, address weth, address owner)
-        SimpleSettlement(limitOrderProtocol, accessToken, weth, owner)
+    constructor(address limitOrderProtocol, IERC20 accessToken, address weth, address owner, IOrderRegistrator orderRegistrator)
+        SimpleSettlement(limitOrderProtocol, accessToken, weth, owner, orderRegistrator)
     {}
 
     function _postInteraction(

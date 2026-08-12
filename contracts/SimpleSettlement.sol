@@ -7,16 +7,21 @@ import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { IOrderMixin } from "@1inch/limit-order-protocol-contract/contracts/interfaces/IOrderMixin.sol";
 import { FeeTaker } from "@1inch/limit-order-protocol-contract/contracts/extensions/FeeTaker.sol";
 
-import { DutchAuctionBase } from "./DutchAuctionBase.sol";
+import { AnchoredDutchAuction } from "./AnchoredDutchAuction.sol";
+import { IOrderRegistrator } from "./interfaces/IOrderRegistrator.sol";
 
 /**
  * @title Simple Settlement contract
  * @notice Contract to execute limit orders settlement, created by Fusion mode.
+ * @dev The Dutch auction and the resolver exclusivity may be anchored to the moment an order was
+ * announced on-chain; see {AnchoredDutchAuction} for the opt-in encoding and its 2038 horizon.
  */
-contract SimpleSettlement is FeeTaker, DutchAuctionBase {
+contract SimpleSettlement is FeeTaker, AnchoredDutchAuction {
     using Math for uint256;
 
-    error AllowedTimeViolation();
+    /// @dev FeeTaker's custom-receiver bit in the first byte of its post-interaction data.
+    bytes1 private constant _CUSTOM_RECEIVER_FLAG = 0x01;
+
     error InvalidProtocolSurplusFee();
     error InvalidEstimatedTakingAmount();
 
@@ -26,9 +31,12 @@ contract SimpleSettlement is FeeTaker, DutchAuctionBase {
      * @param accessToken Contract address whose tokens allow filling limit orders with a fee for resolvers that are outside the whitelist.
      * @param weth The WETH address.
      * @param owner The owner of the contract.
+     * @param orderRegistrator The registrator whose announcements anchored orders are measured from,
+     * or the zero address when announcements are unavailable on this chain.
      */
-    constructor(address limitOrderProtocol, IERC20 accessToken, address weth, address owner)
+    constructor(address limitOrderProtocol, IERC20 accessToken, address weth, address owner, IOrderRegistrator orderRegistrator)
         FeeTaker(limitOrderProtocol, accessToken, weth, owner)
+        AnchoredDutchAuction(orderRegistrator)
     {}
 
     /**
@@ -69,6 +77,39 @@ contract SimpleSettlement is FeeTaker, DutchAuctionBase {
     }
 
     /**
+     * @notice See {FeeTaker-_postInteraction}.
+     * @dev Runs the announcement-anchored checks, which need the order hash, before handing the fill
+     * to the fee logic. The whitelist blob is read in place inside FeeTaker's `extraData`, whose
+     * layout pins the offsets used below:
+     * ```
+     * 1 byte - FeeTaker flags (0x01 signals a custom receiver)
+     * 20 bytes — integrator fee recipient
+     * 20 bytes - protocol fee recipient
+     * 20 bytes — receiver of taking tokens (present when the custom-receiver flag is set)
+     * 5 bytes - integrator fee, integrator rev share and resolver fee
+     * 1 byte - whitelist discount numerator
+     * bytes - whitelist blob determined by `_isWhitelistedPostInteractionImpl`
+     * ```
+     */
+    function _postInteraction(
+        IOrderMixin.Order calldata order,
+        bytes calldata extension,
+        bytes32 orderHash,
+        address taker,
+        uint256 makingAmount,
+        uint256 takingAmount,
+        uint256 remainingMakingAmount,
+        bytes calldata extraData
+    ) internal virtual override {
+        unchecked {
+            // 1 flags + 20 + 20 recipients (+ 20 custom receiver) + 6 fee bytes, per the layout above.
+            uint256 whitelistOffset = extraData[0] & _CUSTOM_RECEIVER_FLAG == _CUSTOM_RECEIVER_FLAG ? 67 : 47;
+            _validateAnchoredFill(extraData[whitelistOffset:], orderHash, taker);
+        }
+        super._postInteraction(order, extension, orderHash, taker, makingAmount, takingAmount, remainingMakingAmount, extraData);
+    }
+
+    /**
      * @dev Adds dutch auction capabilities to the getter
      */
     function _getMakingAmount(
@@ -80,7 +121,7 @@ contract SimpleSettlement is FeeTaker, DutchAuctionBase {
         uint256 remainingMakingAmount,
         bytes calldata extraData
     ) internal view override returns (uint256) {
-        (uint256 rateBump, bytes calldata tail) = _getRateBump(extraData);
+        (uint256 rateBump, bytes calldata tail) = _auctionRateBump(orderHash, extraData);
         return Math.mulDiv(
             super._getMakingAmount(order, extension, orderHash, taker, takingAmount, remainingMakingAmount, tail),
             _BASE_POINTS,
@@ -100,7 +141,7 @@ contract SimpleSettlement is FeeTaker, DutchAuctionBase {
         uint256 remainingMakingAmount,
         bytes calldata extraData
     ) internal view override returns (uint256) {
-        (uint256 rateBump, bytes calldata tail) = _getRateBump(extraData);
+        (uint256 rateBump, bytes calldata tail) = _auctionRateBump(orderHash, extraData);
         return Math.mulDiv(
             super._getTakingAmount(order, extension, orderHash, taker, makingAmount, remainingMakingAmount, tail),
             _BASE_POINTS + rateBump,
@@ -118,6 +159,9 @@ contract SimpleSettlement is FeeTaker, DutchAuctionBase {
      * (bytes12)[N] — taker whitelist
      * ```
      * Only 10 lowest bytes of the address are used for comparison.
+     * When the allowed time carries the anchored bit, the anchored fields of
+     * {AnchoredDutchAuction-_validateAnchoredFill} sit between it and the whitelist size; they are
+     * enforced by `_postInteraction`, so this walk skips them.
      * @param taker The taker address to check.
      * @return isWhitelisted Whether the taker is whitelisted.
      * @return tail Remaining calldata.
@@ -125,10 +169,10 @@ contract SimpleSettlement is FeeTaker, DutchAuctionBase {
     function _isWhitelistedPostInteractionImpl(bytes calldata whitelistData, address taker) internal view override returns (bool isWhitelisted, bytes calldata tail) {
         unchecked {
             uint80 maskedTakerAddress = uint80(uint160(taker));
-            uint256 allowedTime = uint32(bytes4(whitelistData));
-            uint256 size = uint8(whitelistData[4]);
-            bytes calldata whitelist = whitelistData[5:5 + 12 * size];
-            tail = whitelistData[5 + 12 * size:];
+            (uint256 allowedTime, uint256 offset) = _skipAnchoredFields(whitelistData);
+            uint256 size = uint8(whitelistData[offset]);
+            bytes calldata whitelist = whitelistData[offset + 1:offset + 1 + 12 * size];
+            tail = whitelistData[offset + 1 + 12 * size:];
 
             for (uint256 i = 0; i < size; i++) {
                 uint80 whitelistedAddress = uint80(bytes10(whitelist));

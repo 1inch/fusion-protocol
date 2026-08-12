@@ -13,6 +13,7 @@ module.exports = {
     DAO_ADDRESS: constants.daoAddress || {},
     POWER_POD_ADDRESS: constants.powerPodAddress || {},
     WHITELIST_REGISTRY_ADDRESS: constants.whitelistRegistryAddress || {},
+    ORDER_REGISTRATOR_ADDRESS: constants.orderRegistratorAddress || {},
     MINT_TO: constants.mintTo || {},
     MINT_TOKEN_ID: constants.mintTokenId || {},
     CONTRACT_ADDRESS: constants.contractAddress || {},

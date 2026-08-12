@@ -26,7 +26,7 @@ describe('MeasureGas', function () {
         await weth.deposit({ value: ether('1') });
         await weth.connect(alice).deposit({ value: ether('1') });
 
-        const settlementExtension = await deployContract('Settlement', [lopv4, accessToken, weth, owner]);
+        const settlementExtension = await deployContract('Settlement', [lopv4, accessToken, weth, owner, constants.ZERO_ADDRESS]);
         const SettlementV1 = JSON.parse(fs.readFileSync(path.join(__dirname, '../artifacts-v1/SettlementV1.json'), 'utf8'));
         // const settlement = await deployContract(SettlementV1.abi, [lopv3.address, inch.address]);
         const ContractFactory = await ethers.getContractFactory(SettlementV1.abi, SettlementV1.bytecode);

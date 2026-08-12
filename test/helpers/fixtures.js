@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { ethers } = require('hardhat');
-const { ether, deployContract } = require('@1inch/solidity-utils');
+const { constants, ether, deployContract } = require('@1inch/solidity-utils');
 
 async function getChainId() {
     return (await ethers.provider.getNetwork()).chainId;
@@ -32,7 +32,8 @@ async function initContractsForSettlement() {
     await weth.deposit({ value: ether('1') });
     await weth.connect(alice).deposit({ value: ether('1') });
 
-    const settlement = await deployContract('SimpleSettlement', [lopv4, accessToken, weth, owner]);
+    // No registrator: the shared fixture serves the legacy paths, where anchoring never engages.
+    const settlement = await deployContract('SimpleSettlement', [lopv4, accessToken, weth, owner, constants.ZERO_ADDRESS]);
 
     const ResolverMock = await ethers.getContractFactory('ResolverMock');
     const resolver = await ResolverMock.deploy(settlement, lopv4);

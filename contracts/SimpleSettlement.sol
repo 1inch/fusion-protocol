@@ -103,7 +103,7 @@ contract SimpleSettlement is FeeTaker, AnchoredDutchAuction {
     ) internal virtual override {
         unchecked {
             // 1 flags + 20 + 20 recipients (+ 20 custom receiver) + 6 fee bytes, per the layout above.
-            uint256 whitelistOffset = extraData[0] & _CUSTOM_RECEIVER_FLAG == _CUSTOM_RECEIVER_FLAG ? 67 : 47;
+            uint256 whitelistOffset = extraData[0] & _CUSTOM_RECEIVER_FLAG != 0 ? 67 : 47;
             _validateAnchoredFill(extraData[whitelistOffset:], orderHash, taker);
         }
         super._postInteraction(order, extension, orderHash, taker, makingAmount, takingAmount, remainingMakingAmount, extraData);

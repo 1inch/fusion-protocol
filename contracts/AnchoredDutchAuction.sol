@@ -71,19 +71,17 @@ abstract contract AnchoredDutchAuction is DutchAuctionBase {
      */
     function _validateAnchoredFill(bytes calldata whitelistData, bytes32 orderHash, address taker) internal view {
         unchecked {
-            uint256 allowedTime = uint32(bytes4(whitelistData));
-            if (allowedTime & _ANCHORED_FLAG == 0) return;
+            if (uint32(bytes4(whitelistData)) & _ANCHORED_FLAG == 0) return;
 
-            uint256 announcementTime = _announcedAt(orderHash);
+            uint256 announcedAt = _announcedAt(orderHash);
             uint256 anchoredDelay = uint24(bytes3(whitelistData[4:7]));
-            uint256 offset = 7;
-
-            if (anchoredDelay & _DEADLINE_FLAG != 0) {
-                if (block.timestamp > announcementTime + uint24(bytes3(whitelistData[7:10]))) revert AuctionExpired();
-                offset = 10;
+            bool hasDeadline = anchoredDelay & _DEADLINE_FLAG != 0;
+            if (hasDeadline && block.timestamp > announcedAt + uint24(bytes3(whitelistData[7:10]))) {
+                revert AuctionExpired();
             }
 
-            _checkAnchoredExclusivity(whitelistData[offset:], taker, announcementTime + (anchoredDelay & _DELAY_MASK));
+            uint256 offset = 4 + (hasDeadline ? 6 : 3);
+            _checkAnchoredExclusivity(whitelistData[offset:], taker, announcedAt + (anchoredDelay & _DELAY_MASK));
         }
     }
 
@@ -105,10 +103,9 @@ abstract contract AnchoredDutchAuction is DutchAuctionBase {
     function _checkAnchoredExclusivity(bytes calldata whitelistData, address taker, uint256 allowedTime) private view {
         unchecked {
             uint80 maskedTakerAddress = uint80(uint160(taker));
-            uint256 size = uint8(whitelistData[0]);
-            bytes calldata whitelist = whitelistData[1:1 + 12 * size];
+            bytes calldata whitelist = whitelistData[1:1 + 12 * uint8(whitelistData[0])];
 
-            for (uint256 i = 0; i < size; i++) {
+            while (whitelist.length > 0) {
                 if (block.timestamp < allowedTime) revert AllowedTimeViolation();
                 if (maskedTakerAddress == uint80(bytes10(whitelist))) return;
                 allowedTime += uint16(bytes2(whitelist[10:])); // add next time delta
@@ -120,9 +117,8 @@ abstract contract AnchoredDutchAuction is DutchAuctionBase {
 
     /// @dev Order's announcement time; reverts when never announced or no registrator is set.
     function _announcedAt(bytes32 orderHash) private view returns (uint256 announcedAt) {
-        IOrderRegistrator orderRegistrator = _ORDER_REGISTRATOR;
-        if (address(orderRegistrator) == address(0)) revert OrderNotAnnounced();
-        announcedAt = orderRegistrator.announcedAt(orderHash);
+        if (address(_ORDER_REGISTRATOR) == address(0)) revert OrderNotAnnounced();
+        announcedAt = _ORDER_REGISTRATOR.announcedAt(orderHash);
         if (announcedAt == 0) revert OrderNotAnnounced();
     }
 }

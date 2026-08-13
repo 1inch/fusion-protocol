@@ -118,7 +118,6 @@ describe('AnchoredAuction', function () {
             const order = await buildAnchoredOrder({ dai, weth, settlement: bareSettlement, auctionDetails: buildAnchoredAuctionDetails(anchoredParams) });
             const sig = await signature(order, chainId, lopv4);
 
-            // Even an announced order cannot anchor to a registrator the settlement does not have.
             await announce(registrator, order);
             await expect(fill(lopv4, order, sig, MAKING_AMOUNT)).to.be.revertedWithCustomError(bareSettlement, 'OrderNotAnnounced');
         });
@@ -129,7 +128,6 @@ describe('AnchoredAuction', function () {
             const order = await buildAnchoredOrder({ dai, weth, settlement, auctionDetails: buildAnchoredAuctionDetails(anchoredParams) });
             const sig = await signature(order, chainId, lopv4);
 
-            // A build-time start of 0 is long past; the announcement is what the auction runs from.
             const announcedAt = await announce(registrator, order);
             const resolved = { ...anchoredParams, startTime: announcedAt };
 
@@ -169,8 +167,7 @@ describe('AnchoredAuction', function () {
             const order = await buildAnchoredOrder({ dai, weth, settlement, auctionDetails: buildAnchoredAuctionDetails(anchoredParams) });
             const sig = await signature(order, chainId, lopv4);
 
-            // The maker announces and a resolver fills in the same block; the fill sees the announcement
-            // written earlier in the block and prices at the very start of the curve.
+            // The fill sees an announcement written earlier in the same block and prices at the curve's start.
             await hre.network.provider.send('evm_setAutomine', [false]);
             let announceTx, fillTx;
             try {
@@ -208,8 +205,7 @@ describe('AnchoredAuction', function () {
             await time.setNextBlockTimestamp(fillTime);
             const fillTx = fill(lopv4, order, sig, MAKING_AMOUNT);
 
-            // One second into the anchored curve — essentially the top, rather than the floor price an
-            // unanchored order would have decayed to hours ago.
+            // The top of the curve, not the floor an unanchored order would have decayed to hours ago.
             const expected = takingAmountFor(order, { ...anchoredParams, startTime: announcedAt }, fillTime, MAKING_AMOUNT, MAKING_AMOUNT);
             expect(expected).to.be.greaterThan(ceilDiv(TAKING_AMOUNT * (BASE_POINTS + HALF_PERCENT * 9n / 10n), BASE_POINTS));
             await expect(fillTx).to.changeTokenBalances(weth, [taker, maker], [-expected, expected]);
@@ -313,7 +309,6 @@ describe('AnchoredAuction', function () {
             const sig = await signature(order, chainId, lopv4);
             const announcedAt = await announce(registrator, order);
 
-            // The second resolver is whitelisted but its window opens a delta after the first one's.
             await time.setNextBlockTimestamp(announcedAt + 15);
             await expect(fill(lopv4, order, sig, MAKING_AMOUNT / 2n, { from: otherResolver }))
                 .to.be.revertedWithCustomError(settlement, 'AllowedTimeViolation');
@@ -397,8 +392,7 @@ describe('AnchoredAuction', function () {
         it('enforces the anchored window behind a custom receiver', async function () {
             const { dai, weth, lopv4, chainId, registrator, settlement } = await loadFixture(deployContractsAndInit);
 
-            // A custom receiver shifts FeeTaker's post-interaction layout by 20 bytes; the anchored
-            // walk must still find the whitelist blob behind it.
+            // A custom receiver shifts FeeTaker's layout by 20 bytes; the whitelist must still be found.
             const resolverFee = 1000n; // 1% in 1e5
             const order = await buildAnchoredOrder({
                 dai,
@@ -502,8 +496,7 @@ describe('AnchoredAuction', function () {
                 return receipt.gasUsed;
             }
 
-            // Warm-up fill: pays the zero-to-nonzero balance writes so the measured fills all
-            // write already-touched balance slots and differ only by settlement logic.
+            // Warm-up fill, so the measured fills write already-touched balance slots.
             await measure({
                 auctionDetails: buildAnchoredAuctionDetails({ ...params, startTime: await time.latest() }),
                 exclusivity: buildAnchoredExclusivity({}),
@@ -554,8 +547,7 @@ describe('AnchoredAuction', function () {
             const legacyExtraData = ethers.solidityPacked(['bytes', 'bytes'], [buildAnchoredAuctionDetails(params), NO_FEE_DATA]);
             const anchoredExtraData = ethers.solidityPacked(['bytes', 'bytes'], [buildAnchoredAuctionDetails({ ...params, anchored: true }), NO_FEE_DATA]);
 
-            // Announced before the built start, the anchored auction keeps the built start — its curve
-            // must be the legacy one at every point of the timeline.
+            // Announced before the built start, so the curve must match the legacy one everywhere.
             await registrator.registerOrder(order);
             expect(await time.latest()).to.be.lessThan(params.startTime);
 

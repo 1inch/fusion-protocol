@@ -10,6 +10,9 @@ abstract contract DutchAuctionBase {
     uint256 internal constant _BASE_POINTS = 10_000_000; // 100%
     uint256 internal constant _GAS_PRICE_BASE = 1_000_000; // 1000 means 1 Gwei
 
+    /// @dev The top bit of the points count is reserved for extensions to flag their own fields.
+    uint256 private constant _POINTS_COUNT_MASK = 0x7f;
+
     /**
      * @dev Parses auction rate bump data from the `auctionDetails` field.
      * `gasBumpEstimate` and `gasPriceEstimate` are used to estimate the transaction costs
@@ -29,16 +32,34 @@ abstract contract DutchAuctionBase {
      * @return Remaining calldata after parsing auction data.
      */
     function _getRateBump(bytes calldata auctionDetails) internal view virtual returns (uint256, bytes calldata) {
+        (int256 netBump, bytes calldata tail) = _getNetBump(auctionDetails);
+        return (_clampBump(netBump), tail);
+    }
+
+    /// @dev Auction bump net of the gas bump; negative when the gas bump exceeds it.
+    function _getNetBump(bytes calldata auctionDetails) internal view virtual returns (int256 netBump, bytes calldata tail) {
         unchecked {
-            uint256 gasBumpEstimate = uint24(bytes3(auctionDetails[0:3]));
-            uint256 gasPriceEstimate = uint32(bytes4(auctionDetails[3:7]));
-            uint256 gasBump = gasBumpEstimate == 0 || gasPriceEstimate == 0 ? 0 : gasBumpEstimate * block.basefee / gasPriceEstimate / _GAS_PRICE_BASE;
             uint256 auctionStartTime = uint32(bytes4(auctionDetails[7:11]));
             uint256 auctionFinishTime = auctionStartTime + uint24(bytes3(auctionDetails[11:14]));
             uint256 initialRateBump = uint24(bytes3(auctionDetails[14:17]));
-            (uint256 auctionBump, bytes calldata tail) = _getAuctionBump(auctionStartTime, auctionFinishTime, initialRateBump, auctionDetails[17:]);
-            return (auctionBump > gasBump ? auctionBump - gasBump : 0, tail);
+            uint256 auctionBump;
+            (auctionBump, tail) = _getAuctionBump(auctionStartTime, auctionFinishTime, initialRateBump, auctionDetails[17:]);
+            netBump = int256(auctionBump) - int256(_getGasBump(auctionDetails));
         }
+    }
+
+    /// @dev The rate bump estimating the taker's transaction costs at the current base fee.
+    function _getGasBump(bytes calldata auctionDetails) internal view returns (uint256) {
+        unchecked {
+            uint256 gasBumpEstimate = uint24(bytes3(auctionDetails[0:3]));
+            uint256 gasPriceEstimate = uint32(bytes4(auctionDetails[3:7]));
+            return gasBumpEstimate == 0 || gasPriceEstimate == 0 ? 0 : gasBumpEstimate * block.basefee / gasPriceEstimate / _GAS_PRICE_BASE;
+        }
+    }
+
+    /// @dev Clamps a net bump to a non-negative rate bump.
+    function _clampBump(int256 netBump) internal pure returns (uint256) {
+        return netBump > 0 ? uint256(netBump) : 0;
     }
 
     /**
@@ -60,7 +81,7 @@ abstract contract DutchAuctionBase {
         unchecked {
             uint256 currentPointTime = auctionStartTime;
             uint256 currentRateBump = initialRateBump;
-            uint256 pointsCount = uint8(pointsAndTimeDeltas[0]);
+            uint256 pointsCount = uint8(pointsAndTimeDeltas[0]) & _POINTS_COUNT_MASK;
             pointsAndTimeDeltas = pointsAndTimeDeltas[1:];
             bytes calldata tail = pointsAndTimeDeltas[5 * pointsCount:];
 

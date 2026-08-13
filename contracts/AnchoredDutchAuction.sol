@@ -7,14 +7,11 @@ import { IOrderRegistrator } from "./interfaces/IOrderRegistrator.sol";
 
 /**
  * @title Announcement-anchored Dutch auction
- * @notice Dutch auction whose curve and resolver exclusivity may be measured from an order's
- * on-chain announcement, for orders whose submission time is unknown at build time.
+ * @notice Dutch auction whose curve and resolver exclusivity may run from the order's on-chain
+ * announcement instead of build-time timestamps.
  * @dev Opt-in per order via the top bit of the uint32 timestamps the legacy encodings already
- * carry, so a legacy blob parses unchanged: the top bit of `auctionStartTime` and of the whitelist
- * `allowedTime` anchor the start and the exclusivity to the announcement (each taking the later of
- * announcement and built time), and the top bit of the anchored delay adds a fill deadline. Free
- * until 19 Jan 2038 (2^31 s) — replace before then, when real timestamps set it and anchored reads
- * revert.
+ * carry (`auctionStartTime`, whitelist `allowedTime`); anchoring takes the later of announcement
+ * and built time. The bit is free until 19 Jan 2038.
  */
 abstract contract AnchoredDutchAuction is DutchAuctionBase {
     uint256 private constant _ANCHORED_FLAG = 1 << 31; // top bit of a uint32 timestamp
@@ -33,17 +30,14 @@ abstract contract AnchoredDutchAuction is DutchAuctionBase {
         _ORDER_REGISTRATOR = orderRegistrator;
     }
 
-    /// @dev Rate bump for the AuctionDetails of {DutchAuctionBase-_getRateBump}; when the top bit of
-    /// `auctionStartTime` is set, the start becomes max(announcement, built start).
-    function _auctionRateBump(bytes32 orderHash, bytes calldata auctionDetails) internal view returns (uint256, bytes calldata) {
+    /// @dev {DutchAuctionBase-_getNetBump} with an anchored start raised to the announcement time.
+    function _auctionNetBump(bytes32 orderHash, bytes calldata auctionDetails) internal view returns (int256 netBump, bytes calldata tail) {
         unchecked {
             uint256 auctionStartTime = uint32(bytes4(auctionDetails[7:11]));
             if (auctionStartTime & _ANCHORED_FLAG == 0) {
-                return _getRateBump(auctionDetails);
+                return _getNetBump(auctionDetails);
             }
 
-            uint256 gasBumpEstimate = uint24(bytes3(auctionDetails[0:3]));
-            uint256 gasPriceEstimate = uint32(bytes4(auctionDetails[3:7]));
             uint256 auctionDuration = uint24(bytes3(auctionDetails[11:14]));
             uint256 initialRateBump = uint24(bytes3(auctionDetails[14:17]));
 
@@ -51,19 +45,18 @@ abstract contract AnchoredDutchAuction is DutchAuctionBase {
             uint256 anchoredStartTime = _announcedAt(orderHash);
             if (anchoredStartTime > auctionStartTime) auctionStartTime = anchoredStartTime;
 
-            uint256 gasBump = gasBumpEstimate == 0 || gasPriceEstimate == 0 ? 0 : gasBumpEstimate * block.basefee / gasPriceEstimate / _GAS_PRICE_BASE;
-            (uint256 auctionBump, bytes calldata tail) = _getAuctionBump(auctionStartTime, auctionStartTime + auctionDuration, initialRateBump, auctionDetails[17:]);
-            return (auctionBump > gasBump ? auctionBump - gasBump : 0, tail);
+            uint256 auctionBump;
+            (auctionBump, tail) = _getAuctionBump(auctionStartTime, auctionStartTime + auctionDuration, initialRateBump, auctionDetails[17:]);
+            netBump = int256(auctionBump) - int256(_getGasBump(auctionDetails));
         }
     }
 
     /**
-     * @dev Anchored pre-checks for a fill; a no-op for a legacy blob. Walks the exclusivity ladder
-     * from the announcement and enforces the optional deadline; the caller walks the same ladder
-     * from the absolute allowed time, so a taker must clear both. `whitelistData` layout:
+     * @dev Announcement-based deadline and exclusivity checks; a no-op for a legacy blob.
+     * `whitelistData` layout:
      * ```
-     * 4 bytes - allowed time; top bit: measure exclusivity from the announcement too
-     * 3 bytes - anchored allowed-time delay (present when set); its top bit adds the deadline
+     * 4 bytes - allowed time; top bit: anchored
+     * 3 bytes - anchored allowed-time delay (present when anchored); its top bit adds the deadline
      * 3 bytes - announcement deadline delay (present when the deadline bit is set)
      * 1 byte - size of the whitelist
      * (bytes12)[N] — taker whitelist
@@ -85,8 +78,7 @@ abstract contract AnchoredDutchAuction is DutchAuctionBase {
         }
     }
 
-    /// @dev Absolute allowed time and the offset of the whitelist size byte, skipping the anchored
-    /// fields (enforced by `_validateAnchoredFill`) so a whitelist walk works anchored or not.
+    /// @dev Absolute allowed time and the offset of the whitelist size byte, anchored fields skipped.
     function _skipAnchoredFields(bytes calldata whitelistData) internal pure returns (uint256 allowedTime, uint256 offset) {
         unchecked {
             allowedTime = uint32(bytes4(whitelistData));
@@ -98,8 +90,7 @@ abstract contract AnchoredDutchAuction is DutchAuctionBase {
         }
     }
 
-    /// @dev Walks the resolver ladder from the anchored allowed time, mirroring the settlement's
-    /// walk from the absolute one.
+    /// @dev The settlement's ladder walk, starting from the anchored allowed time.
     function _checkAnchoredExclusivity(bytes calldata whitelistData, address taker, uint256 allowedTime) private view {
         unchecked {
             uint80 maskedTakerAddress = uint80(uint160(taker));

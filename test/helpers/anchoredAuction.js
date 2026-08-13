@@ -6,16 +6,17 @@ const BASE_POINTS = 10_000_000n; // 100%
 const ANCHORED_FLAG = 1n << 31n;
 // Top bit of the uint24 anchored allowed-time delay.
 const ANNOUNCEMENT_DEADLINE_FLAG = 1n << 23n;
+// Top bit of the uint8 auction points count.
+const FILL_CURVE_FLAG = 1n << 7n;
+// Fill shares are measured in 1e4.
+const SHARE_BASE = 10_000n;
 
 const ceilDiv = (a, b) => (a + b - 1n) / b;
 
 /** Zero fees and an empty whitelist, so a settlement getter passes its input straight through. */
 const NO_FEE_DATA = ethers.solidityPacked(['uint16', 'uint8', 'uint16', 'uint8', 'uint8'], [0, 0, 0, 0, 0]);
 
-/**
- * Packs the AuctionDetails blob read by the settlement getters. With `anchored` unset the bytes are
- * exactly the legacy encoding; anchoring only sets the top bit of the packed start time.
- */
+/** Packs the AuctionDetails blob; with no options set the bytes are exactly the legacy encoding. */
 function buildAnchoredAuctionDetails({
     gasBumpEstimate = 0,
     gasPriceEstimate = 0,
@@ -23,23 +24,29 @@ function buildAnchoredAuctionDetails({
     duration = 0,
     initialRateBump = 0,
     anchored = false,
+    fillPremiums = undefined,
     points = [],
 } = {}) {
     const packedStartTime = BigInt(startTime) | (anchored ? ANCHORED_FLAG : 0n);
+    const packedPointsCount = BigInt(points.length) | (fillPremiums !== undefined ? FILL_CURVE_FLAG : 0n);
     const types = ['uint24', 'uint32', 'uint32', 'uint24', 'uint24', 'uint8'];
-    const values = [gasBumpEstimate, gasPriceEstimate, packedStartTime, duration, initialRateBump, points.length];
+    const values = [gasBumpEstimate, gasPriceEstimate, packedStartTime, duration, initialRateBump, packedPointsCount];
     for (const { coefficient, delay } of points) {
         types.push('uint24', 'uint16');
         values.push(coefficient, delay);
     }
+    if (fillPremiums !== undefined) {
+        types.push('uint24', 'uint8');
+        values.push(fillPremiums.initial, fillPremiums.points.length);
+        for (const { premium, shareDelta } of fillPremiums.points) {
+            types.push('uint24', 'uint16');
+            values.push(premium, shareDelta);
+        }
+    }
     return ethers.solidityPacked(types, values);
 }
 
-/**
- * Packs the resolver exclusivity read by the settlement post-interaction: the absolute allowed time
- * and whitelist exactly as the legacy encoding, with the anchored fields carried on the top bits.
- * `whitelist` entries are `{ address, delta }`, where `delta` is the wait until the next resolver may fill.
- */
+/** Packs the whitelist blob; anchored fields ride on the top bits, legacy bytes otherwise. */
 function buildAnchoredExclusivity({
     allowedTime = 0,
     allowedTimeDelay = undefined,
@@ -47,7 +54,6 @@ function buildAnchoredExclusivity({
     whitelist = [],
 } = {}) {
     if (announcementDeadlineDelay !== undefined && allowedTimeDelay === undefined) {
-        // The deadline flag lives inside the anchored delay field, so the combination cannot be encoded.
         throw new Error('announcementDeadlineDelay requires allowedTimeDelay');
     }
 
@@ -100,11 +106,50 @@ function applyGasBump(rateBump, gasBump) {
     return rateBump > gasBump ? rateBump - gasBump : 0n;
 }
 
+/** Mirrors PartialFillPremiumAuction._fillPremium. */
+function fillPremiumAt(makingAmount, remainingMakingAmount, { initial, points = [] }) {
+    let currentPremium = BigInt(initial);
+    const share = makingAmount * SHARE_BASE / remainingMakingAmount;
+    if (share === 0n) return currentPremium;
+
+    let currentShare = 0n;
+    for (const { premium, shareDelta } of points) {
+        const nextPremium = BigInt(premium);
+        const nextShare = currentShare + BigInt(shareDelta);
+        if (share <= nextShare) {
+            return ((share - currentShare) * nextPremium + (nextShare - share) * currentPremium) / (nextShare - currentShare);
+        }
+        currentPremium = nextPremium;
+        currentShare = nextShare;
+    }
+    return (SHARE_BASE - share) * currentPremium / (SHARE_BASE - currentShare);
+}
+
+/** Mirrors PartialFillPremiumAuction._fillRateBump. */
+function rateBumpForFill(auctionBump, auction, makingAmount, remainingMakingAmount) {
+    if (!auction.fillPremiums || makingAmount >= remainingMakingAmount) return auctionBump;
+    return auctionBump + fillPremiumAt(makingAmount, remainingMakingAmount, auction.fillPremiums);
+}
+
 /** Taking amount a fill by making amount is priced at. */
 function takingAmountFor(order, auction, timestamp, makingAmount, remainingMakingAmount, gasBump = 0n) {
-    const rateBump = applyGasBump(auctionBumpAt(timestamp, auction), gasBump);
+    const rateBump = applyGasBump(rateBumpForFill(auctionBumpAt(timestamp, auction), auction, makingAmount, remainingMakingAmount), gasBump);
     const unbumped = ceilDiv(order.takingAmount * makingAmount, order.makingAmount);
     return ceilDiv(unbumped * (BASE_POINTS + rateBump), BASE_POINTS);
+}
+
+/** Making amount a fill by taking amount is priced at, with the conservative fill-share estimate. */
+function makingAmountFor(order, auction, timestamp, takingAmount, remainingMakingAmount, gasBump = 0n) {
+    const auctionBump = auctionBumpAt(timestamp, auction);
+    const unbumped = order.makingAmount * takingAmount / order.takingAmount;
+    let rateBump = auctionBump;
+    if (auction.fillPremiums) {
+        // Premium curves are enforced non-increasing, so the initial premium is the worst one.
+        const worstRateBump = applyGasBump(auctionBump + BigInt(auction.fillPremiums.initial), gasBump);
+        const estimate = unbumped * BASE_POINTS / (BASE_POINTS + worstRateBump);
+        rateBump = rateBumpForFill(auctionBump, auction, estimate, remainingMakingAmount);
+    }
+    return unbumped * BASE_POINTS / (BASE_POINTS + applyGasBump(rateBump, gasBump));
 }
 
 module.exports = {
@@ -114,5 +159,7 @@ module.exports = {
     auctionBumpAt,
     buildAnchoredAuctionDetails,
     buildAnchoredExclusivity,
+    fillPremiumAt,
     takingAmountFor,
+    makingAmountFor,
 };

@@ -7,16 +7,16 @@ import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { IOrderMixin } from "@1inch/limit-order-protocol-contract/contracts/interfaces/IOrderMixin.sol";
 import { FeeTaker } from "@1inch/limit-order-protocol-contract/contracts/extensions/FeeTaker.sol";
 
-import { AnchoredDutchAuction } from "./AnchoredDutchAuction.sol";
+import { PartialFillPremiumAuction } from "./PartialFillPremiumAuction.sol";
 import { IOrderRegistrator } from "./interfaces/IOrderRegistrator.sol";
 
 /**
  * @title Simple Settlement contract
  * @notice Contract to execute limit orders settlement, created by Fusion mode.
- * @dev The Dutch auction and the resolver exclusivity may be anchored to the moment an order was
- * announced on-chain; see {AnchoredDutchAuction} for the opt-in encoding and its 2038 horizon.
+ * @dev The auction and exclusivity may be anchored to the order's on-chain announcement
+ * ({AnchoredDutchAuction}) and a partial fill may pay a premium ({PartialFillPremiumAuction}).
  */
-contract SimpleSettlement is FeeTaker, AnchoredDutchAuction {
+contract SimpleSettlement is FeeTaker, PartialFillPremiumAuction {
     using Math for uint256;
 
     /// @dev FeeTaker's custom-receiver bit in the first byte of its post-interaction data.
@@ -31,12 +31,11 @@ contract SimpleSettlement is FeeTaker, AnchoredDutchAuction {
      * @param accessToken Contract address whose tokens allow filling limit orders with a fee for resolvers that are outside the whitelist.
      * @param weth The WETH address.
      * @param owner The owner of the contract.
-     * @param orderRegistrator The registrator whose announcements anchored orders are measured from,
-     * or the zero address when announcements are unavailable on this chain.
+     * @param orderRegistrator Announcement registry for anchored orders, or zero when unavailable.
      */
     constructor(address limitOrderProtocol, IERC20 accessToken, address weth, address owner, IOrderRegistrator orderRegistrator)
         FeeTaker(limitOrderProtocol, accessToken, weth, owner)
-        AnchoredDutchAuction(orderRegistrator)
+        PartialFillPremiumAuction(orderRegistrator)
     {}
 
     /**
@@ -78,18 +77,7 @@ contract SimpleSettlement is FeeTaker, AnchoredDutchAuction {
 
     /**
      * @notice See {FeeTaker-_postInteraction}.
-     * @dev Runs the announcement-anchored checks, which need the order hash, before handing the fill
-     * to the fee logic. The whitelist blob is read in place inside FeeTaker's `extraData`, whose
-     * layout pins the offsets used below:
-     * ```
-     * 1 byte - FeeTaker flags (0x01 signals a custom receiver)
-     * 20 bytes — integrator fee recipient
-     * 20 bytes - protocol fee recipient
-     * 20 bytes — receiver of taking tokens (present when the custom-receiver flag is set)
-     * 5 bytes - integrator fee, integrator rev share and resolver fee
-     * 1 byte - whitelist discount numerator
-     * bytes - whitelist blob determined by `_isWhitelistedPostInteractionImpl`
-     * ```
+     * @dev Runs the anchored checks, which need the order hash, before FeeTaker's fee logic.
      */
     function _postInteraction(
         IOrderMixin.Order calldata order,
@@ -102,7 +90,7 @@ contract SimpleSettlement is FeeTaker, AnchoredDutchAuction {
         bytes calldata extraData
     ) internal virtual override {
         unchecked {
-            // 1 flags + 20 + 20 recipients (+ 20 custom receiver) + 6 fee bytes, per the layout above.
+            // FeeTaker's extraData: 1 flags byte, two or three 20-byte recipients, 6 fee bytes, whitelist.
             uint256 whitelistOffset = extraData[0] & _CUSTOM_RECEIVER_FLAG != 0 ? 67 : 47;
             _validateAnchoredFill(extraData[whitelistOffset:], orderHash, taker);
         }
@@ -121,12 +109,10 @@ contract SimpleSettlement is FeeTaker, AnchoredDutchAuction {
         uint256 remainingMakingAmount,
         bytes calldata extraData
     ) internal view override returns (uint256) {
-        (uint256 rateBump, bytes calldata tail) = _auctionRateBump(orderHash, extraData);
-        return Math.mulDiv(
-            super._getMakingAmount(order, extension, orderHash, taker, takingAmount, remainingMakingAmount, tail),
-            _BASE_POINTS,
-            _BASE_POINTS + rateBump
-        );
+        (int256 netBump, bytes calldata fillCurve, bytes calldata tail) = _parseAuctionDetails(orderHash, extraData);
+        uint256 unbumpedMakingAmount = super._getMakingAmount(order, extension, orderHash, taker, takingAmount, remainingMakingAmount, tail);
+        uint256 rateBump = _estimatedFillRateBump(netBump, fillCurve, unbumpedMakingAmount, remainingMakingAmount);
+        return Math.mulDiv(unbumpedMakingAmount, _BASE_POINTS, _BASE_POINTS + rateBump);
     }
 
     /**
@@ -141,7 +127,8 @@ contract SimpleSettlement is FeeTaker, AnchoredDutchAuction {
         uint256 remainingMakingAmount,
         bytes calldata extraData
     ) internal view override returns (uint256) {
-        (uint256 rateBump, bytes calldata tail) = _auctionRateBump(orderHash, extraData);
+        (int256 netBump, bytes calldata fillCurve, bytes calldata tail) = _parseAuctionDetails(orderHash, extraData);
+        uint256 rateBump = _fillRateBump(netBump, fillCurve, makingAmount, remainingMakingAmount);
         return Math.mulDiv(
             super._getTakingAmount(order, extension, orderHash, taker, makingAmount, remainingMakingAmount, tail),
             _BASE_POINTS + rateBump,
@@ -159,9 +146,8 @@ contract SimpleSettlement is FeeTaker, AnchoredDutchAuction {
      * (bytes12)[N] — taker whitelist
      * ```
      * Only 10 lowest bytes of the address are used for comparison.
-     * When the allowed time carries the anchored bit, the anchored fields of
-     * {AnchoredDutchAuction-_validateAnchoredFill} sit between it and the whitelist size; they are
-     * enforced by `_postInteraction`, so this walk skips them.
+     * Anchored fields, when present, sit between the allowed time and the size; they are enforced
+     * by `_postInteraction` and only skipped here.
      * @param taker The taker address to check.
      * @return isWhitelisted Whether the taker is whitelisted.
      * @return tail Remaining calldata.

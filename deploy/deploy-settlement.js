@@ -28,6 +28,8 @@ module.exports = async ({ getNamedAccounts, deployments, config }) => {
         constants.ACCESS_TOKEN_ADDRESS[chainId],
         constants.WETH[chainId],
         constants.SETTLEMENT_OWNER_ADDRESS[chainId],
+        // Anchored orders are fail-closed: with the zero registrator they revert until the address is configured
+        constants.ORDER_REGISTRATOR_ADDRESS?.[chainId] ?? ethers.ZeroAddress,
     ];
 
     const deploymentName = 'SimpleSettlement';

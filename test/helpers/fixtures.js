@@ -32,7 +32,8 @@ async function initContractsForSettlement() {
     await weth.deposit({ value: ether('1') });
     await weth.connect(alice).deposit({ value: ether('1') });
 
-    const settlement = await deployContract('SimpleSettlement', [lopv4, accessToken, weth, owner]);
+    const orderRegistrator = await deployContract('OrderRegistratorMock');
+    const settlement = await deployContract('SimpleSettlement', [lopv4, accessToken, weth, owner, orderRegistrator]);
 
     const ResolverMock = await ethers.getContractFactory('ResolverMock');
     const resolver = await ResolverMock.deploy(settlement, lopv4);
@@ -49,7 +50,7 @@ async function initContractsForSettlement() {
     await accessToken.mint(owner, 1);
 
     return {
-        contracts: { dai, weth, accessToken, lopv4, settlement, resolver },
+        contracts: { dai, weth, accessToken, lopv4, settlement, resolver, orderRegistrator },
         accounts: { owner, alice, bob, charlie },
         others: { chainId, abiCoder },
     };

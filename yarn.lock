@@ -21,12 +21,11 @@
     "@1inch/token-plugins" "1.3.0"
     "@openzeppelin/contracts" "5.0.1"
 
-"@1inch/limit-order-protocol-contract@4.3.2":
-  version "4.3.2"
-  resolved "https://registry.yarnpkg.com/@1inch/limit-order-protocol-contract/-/limit-order-protocol-contract-4.3.2.tgz#10f85819a39342897c0c27177b13218423717f7b"
-  integrity sha512-tDHDOsiOfZYobCWqioGi7n/Kw57SkGpqAQCgArzJO6GSM/V3GgBrzSoc8l7UlxH7XNpVKVN2PfFfozvnOug2hw==
+"@1inch/limit-order-protocol-contract@1inch/limit-order-protocol#e710e940f75a1063eb3d580de4e3fe60eea0c780":
+  version "4.3.4"
+  resolved "https://codeload.github.com/1inch/limit-order-protocol/tar.gz/e710e940f75a1063eb3d580de4e3fe60eea0c780"
   dependencies:
-    "@1inch/solidity-utils" "6.4.1"
+    "@1inch/solidity-utils" "6.9.4"
     "@chainlink/contracts" "0.8.0"
     "@gnosis.pm/safe-contracts" "1.3.0"
     "@openzeppelin/contracts" "5.1.0"
@@ -49,15 +48,15 @@
     hardhat "2.19.2"
     hardhat-deploy "0.11.44"
 
-"@1inch/solidity-utils@6.4.1":
-  version "6.4.1"
-  resolved "https://registry.yarnpkg.com/@1inch/solidity-utils/-/solidity-utils-6.4.1.tgz#6269fce53c64b66cde35256db09d791f4b6a8822"
-  integrity sha512-nH/i+AsooEt3bMaKIlSG/++gkrOJqvT6shHxq0NDRnZpV21GbL3VdG+pLxaQRA8uIzQ10CUemJHTxJVI1Rt3xQ==
+"@1inch/solidity-utils@6.9.10":
+  version "6.9.10"
+  resolved "https://registry.yarnpkg.com/@1inch/solidity-utils/-/solidity-utils-6.9.10.tgz#089a03585024dc44bf244ecb2581997d8600005a"
+  integrity sha512-32pJ2cTuXLV55nQBJ9rxkFvzf+MYHPtNEEI3iDYxztnEkh8pPVLbO9DDQb/fVphuaTNQ/g8dE+Prprq5Cm+Tmg==
   dependencies:
     "@metamask/eth-sig-util" "8.0.0"
     "@nomicfoundation/hardhat-ethers" "3.0.8"
     "@nomicfoundation/hardhat-network-helpers" "1.0.12"
-    "@nomicfoundation/hardhat-verify" "2.0.11"
+    "@nomicfoundation/hardhat-verify" "2.0.14"
     "@openzeppelin/contracts" "5.1.0"
     "@uniswap/permit2-sdk" "1.3.0"
     chai "4.5.0"
@@ -69,10 +68,10 @@
     mocha-chai-jest-snapshot "1.1.6"
     node-fetch "2.7.0"
 
-"@1inch/solidity-utils@6.9.10":
-  version "6.9.10"
-  resolved "https://registry.yarnpkg.com/@1inch/solidity-utils/-/solidity-utils-6.9.10.tgz#089a03585024dc44bf244ecb2581997d8600005a"
-  integrity sha512-32pJ2cTuXLV55nQBJ9rxkFvzf+MYHPtNEEI3iDYxztnEkh8pPVLbO9DDQb/fVphuaTNQ/g8dE+Prprq5Cm+Tmg==
+"@1inch/solidity-utils@6.9.4":
+  version "6.9.4"
+  resolved "https://registry.yarnpkg.com/@1inch/solidity-utils/-/solidity-utils-6.9.4.tgz#c905e6dd8eac3ee664dc212f1ad2db79e0b01bff"
+  integrity sha512-QMW7oJB13NVkexeFhGDTshA7TEd1x4rBxeJBHbGVh38GM8KPZ0mU4avRKElRuLkAuurjEwht7FwpZnSInfqZbQ==
   dependencies:
     "@metamask/eth-sig-util" "8.0.0"
     "@nomicfoundation/hardhat-ethers" "3.0.8"
@@ -1868,21 +1867,6 @@
   integrity sha512-xTNQNI/9xkHvjmCJnJOTyqDSl8uq1rKb2WOVmixQxFtRd7Oa3ecO8zM0cyC2YmOK+jHB9WPZ+F/ijkHg1CoORA==
   dependencies:
     ethereumjs-util "^7.1.4"
-
-"@nomicfoundation/hardhat-verify@2.0.11":
-  version "2.0.11"
-  resolved "https://registry.yarnpkg.com/@nomicfoundation/hardhat-verify/-/hardhat-verify-2.0.11.tgz#4ce12b592e01ee93a81933924609c233ed00d951"
-  integrity sha512-lGIo4dNjVQFdsiEgZp3KP6ntLiF7xJEJsbNHfSyIiFCyI0Yv0518ElsFtMC5uCuHEChiBBMrib9jWQvHHT+X3Q==
-  dependencies:
-    "@ethersproject/abi" "^5.1.2"
-    "@ethersproject/address" "^5.0.2"
-    cbor "^8.1.0"
-    chalk "^2.4.2"
-    debug "^4.1.1"
-    lodash.clonedeep "^4.5.0"
-    semver "^6.3.0"
-    table "^6.8.0"
-    undici "^5.14.0"
 
 "@nomicfoundation/hardhat-verify@2.0.14":
   version "2.0.14"

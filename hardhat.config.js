@@ -28,7 +28,7 @@ networks.hardhat = Object.assign(networks.hardhat, {
 });
 
 const DEFAULT_COMPILER_SETTINGS = {
-    version: '0.8.23',
+    version: '0.8.30',
     settings: {
         optimizer: {
             enabled: true,
@@ -42,13 +42,17 @@ const DEFAULT_COMPILER_SETTINGS = {
 const LOW_OPTIMIZER_COMPILER_SETTINGS = JSON.parse(JSON.stringify(DEFAULT_COMPILER_SETTINGS));
 LOW_OPTIMIZER_COMPILER_SETTINGS.settings.optimizer.runs = 200;
 
+// @1inch/st1inch pins solidity 0.8.23 exactly
+const LEGACY_COMPILER_SETTINGS = JSON.parse(JSON.stringify(DEFAULT_COMPILER_SETTINGS));
+LEGACY_COMPILER_SETTINGS.version = '0.8.23';
+
 module.exports = {
     etherscan,
     tracer: {
         enableAllOpcodes: true,
     },
     solidity: {
-        compilers: [DEFAULT_COMPILER_SETTINGS],
+        compilers: [DEFAULT_COMPILER_SETTINGS, LEGACY_COMPILER_SETTINGS],
         overrides: {
             '@1inch/limit-order-protocol-contract/contracts/LimitOrderProtocol.sol': LOW_OPTIMIZER_COMPILER_SETTINGS,
             'contracts/hardhat-dependency-compiler/@1inch/limit-order-protocol-contract/contracts/LimitOrderProtocol.sol': LOW_OPTIMIZER_COMPILER_SETTINGS,

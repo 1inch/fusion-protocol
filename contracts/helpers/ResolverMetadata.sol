@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-pragma solidity 0.8.23;
+pragma solidity 0.8.30;
 
 import { ITokenizedDelegationPlugin } from "@1inch/delegating/contracts/interfaces/ITokenizedDelegationPlugin.sol";
 

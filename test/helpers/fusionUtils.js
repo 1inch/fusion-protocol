@@ -4,6 +4,8 @@ const { buildOrder, buildTakerTraits, signOrder, buildFeeTakerExtensions } = req
 
 const expBase = 999999952502977513n; // 0.05^(1/(2 years)) means 95% value loss over 2 years}
 
+const ANCHOR_FLAG = 0x80000000; // top bit of uint32 timestamps opts into OrderRegistrator anchoring
+
 async function buildCalldataForOrder({
     orderData,
     orderSigner,
@@ -22,15 +24,18 @@ async function buildCalldataForOrder({
     whitelistResolvers = [], // bytes10[]
     resolversAllowedTime = [], // uint16[]
     customPostInteraction = '0x',
+    whitelistAllowedTime = undefined, // uint32, defaults to auction start time (with the anchor flag if anchored)
+    returnOrder = false,
 }) {
     const {
         contracts: { lopv4, settlement, resolver },
         others: { chainId },
-        auction: { startTime: auctionStartTime, details: auctionDetails },
+        auction: { startTime: auctionStartTime, details: auctionDetails, anchored = false },
     } = setupData;
 
+    whitelistAllowedTime = whitelistAllowedTime ?? ((anchored ? BigInt(ANCHOR_FLAG) : 0n) | BigInt(auctionStartTime));
     let whitelist = ethers.solidityPacked(['uint8'], [whitelistResolvers.length]);
-    let whitelistPostInteraction = ethers.solidityPacked(['uint32', 'uint8'], [auctionStartTime, whitelistResolvers.length]);
+    let whitelistPostInteraction = ethers.solidityPacked(['uint32', 'uint8'], [whitelistAllowedTime, whitelistResolvers.length]);
     for (let i = 0; i < whitelistResolvers.length; i++) {
         whitelistPostInteraction += trim0x(ethers.solidityPacked(['bytes10', 'uint16'], [whitelistResolvers[i], resolversAllowedTime[i] || 0]));
         whitelist += trim0x(whitelistResolvers[i]);
@@ -71,7 +76,7 @@ async function buildCalldataForOrder({
         target: await resolver.getAddress(),
     });
 
-    return lopv4.interface.encodeFunctionData('fillOrderArgs', [
+    const calldata = lopv4.interface.encodeFunctionData('fillOrderArgs', [
         order,
         r,
         vs,
@@ -79,6 +84,8 @@ async function buildCalldataForOrder({
         takerTraits.traits,
         takerTraits.args,
     ]);
+
+    return returnOrder ? { calldata, order } : calldata;
 }
 
 async function buildAuctionDetails({
@@ -89,16 +96,17 @@ async function buildAuctionDetails({
     delay = 0,
     initialRateBump = 0,
     points = [],
+    anchored = false, // sets the top bit of the start time to anchor the auction to OrderRegistrator.registeredAt
 } = {}) {
     startTime = startTime || await time.latest();
     let details = ethers.solidityPacked(
-        ['uint24', 'uint32', 'uint32', 'uint24', 'uint24'], [gasBumpEstimate, gasPriceEstimate, startTime + delay, duration, initialRateBump],
+        ['uint24', 'uint32', 'uint32', 'uint24', 'uint24'], [gasBumpEstimate, gasPriceEstimate, (anchored ? ANCHOR_FLAG : 0) + startTime + delay, duration, initialRateBump],
     );
     details += trim0x(ethers.solidityPacked(['uint8'], [points.length]));
     for (let i = 0; i < points.length; i++) {
         details += trim0x(ethers.solidityPacked(['uint24', 'uint16'], [points[i][0], points[i][1]]));
     }
-    return { gasBumpEstimate, gasPriceEstimate, startTime, duration, delay, initialRateBump, details };
+    return { gasBumpEstimate, gasPriceEstimate, startTime, duration, delay, initialRateBump, details, anchored };
 }
 
 function buildSettlementExtensions({
@@ -150,6 +158,7 @@ function buildSettlementExtensions({
 
 module.exports = {
     expBase,
+    ANCHOR_FLAG,
     buildAuctionDetails,
     buildCalldataForOrder,
     buildSettlementExtensions,

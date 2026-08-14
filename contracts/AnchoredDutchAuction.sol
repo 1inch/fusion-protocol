@@ -46,7 +46,7 @@ abstract contract AnchoredDutchAuction is DutchAuctionBase {
             if (anchoredStartTime > auctionStartTime) auctionStartTime = anchoredStartTime;
 
             uint256 auctionBump;
-            (auctionBump, tail) = _getAuctionBump(auctionStartTime, auctionStartTime + auctionDuration, initialRateBump, auctionDetails[17:]);
+            (auctionBump, tail) = _getAuctionBump(auctionStartTime, auctionStartTime + auctionDuration, initialRateBump, auctionDetails[_POINTS_COUNT_OFFSET:]);
             netBump = int256(auctionBump) - int256(_getGasBump(auctionDetails));
         }
     }

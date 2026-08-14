@@ -10,6 +10,11 @@ abstract contract DutchAuctionBase {
     uint256 internal constant _BASE_POINTS = 10_000_000; // 100%
     uint256 internal constant _GAS_PRICE_BASE = 1_000_000; // 1000 means 1 Gwei
 
+    /// @dev Offset of the auction points count byte, i.e. the fixed AuctionDetails header:
+    /// 3-byte gas bump estimate, 4-byte gas price estimate, 4-byte start time, 3-byte duration
+    /// and 3-byte initial rate bump.
+    uint256 internal constant _POINTS_COUNT_OFFSET = 17;
+
     /// @dev The top bit of the points count is reserved for extensions to flag their own fields.
     uint256 private constant _POINTS_COUNT_MASK = 0x7f;
 
@@ -43,7 +48,7 @@ abstract contract DutchAuctionBase {
             uint256 auctionFinishTime = auctionStartTime + uint24(bytes3(auctionDetails[11:14]));
             uint256 initialRateBump = uint24(bytes3(auctionDetails[14:17]));
             uint256 auctionBump;
-            (auctionBump, tail) = _getAuctionBump(auctionStartTime, auctionFinishTime, initialRateBump, auctionDetails[17:]);
+            (auctionBump, tail) = _getAuctionBump(auctionStartTime, auctionFinishTime, initialRateBump, auctionDetails[_POINTS_COUNT_OFFSET:]);
             netBump = int256(auctionBump) - int256(_getGasBump(auctionDetails));
         }
     }

@@ -6,6 +6,7 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { IOrderMixin } from "@1inch/limit-order-protocol-contract/contracts/interfaces/IOrderMixin.sol";
 import { FeeTaker } from "@1inch/limit-order-protocol-contract/contracts/extensions/FeeTaker.sol";
+import { IOrderRegistrator } from "@1inch/limit-order-protocol-contract/contracts/interfaces/IOrderRegistrator.sol";
 
 /**
  * @title Simple Settlement contract
@@ -14,12 +15,16 @@ import { FeeTaker } from "@1inch/limit-order-protocol-contract/contracts/extensi
 contract SimpleSettlement is FeeTaker {
     using Math for uint256;
 
+    uint256 private constant _ANCHORE_FLAG_MASK = 1 << 32; // mask to check if the order is anchored
+
     uint256 private constant _BASE_POINTS = 10_000_000; // 100%
     uint256 private constant _GAS_PRICE_BASE = 1_000_000; // 1000 means 1 Gwei
 
     error AllowedTimeViolation();
     error InvalidProtocolSurplusFee();
     error InvalidEstimatedTakingAmount();
+
+    IOrderRegistrator public immutable _ORDER_REGISTRATOR;
 
     /**
      * @notice Initializes the contract.
@@ -28,9 +33,11 @@ contract SimpleSettlement is FeeTaker {
      * @param weth The WETH address.
      * @param owner The owner of the contract.
      */
-    constructor(address limitOrderProtocol, IERC20 accessToken, address weth, address owner)
+    constructor(address limitOrderProtocol, IERC20 accessToken, address weth, address owner, IOrderRegistrator orderRegistrator)
         FeeTaker(limitOrderProtocol, accessToken, weth, owner)
-    {}
+    {
+        _ORDER_REGISTRATOR = orderRegistrator;
+    }
 
     /**
      * @dev Calculates fee amounts depending on whether the taker is in the whitelist and whether they have an _ACCESS_TOKEN.

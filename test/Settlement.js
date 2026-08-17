@@ -1,9 +1,9 @@
 const { ethers } = require('hardhat');
 const { loadFixture } = require('@nomicfoundation/hardhat-network-helpers');
 const { time, expect, ether, trim0x, timeIncreaseTo, getPermit, getPermit2, compressPermit, permit2Contract, deployContract } = require('@1inch/solidity-utils');
-const { buildMakerTraits } = require('@1inch/limit-order-protocol-contract/test/helpers/orderUtils');
+const { ABIOrder, buildMakerTraits, buildOrder, buildTakerTraits } = require('@1inch/limit-order-protocol-contract/test/helpers/orderUtils');
 const { initContractsForSettlement } = require('./helpers/fixtures');
-const { ANCHOR_FLAG, buildAuctionDetails, buildCalldataForOrder } = require('./helpers/fusionUtils');
+const { ANCHOR_FLAG, buildAuctionDetails, buildCalldataForOrder, buildSettlementExtensions } = require('./helpers/fusionUtils');
 
 const ORDER_FEE = 100n;
 const BACK_ORDER_FEE = 125n;
@@ -958,6 +958,91 @@ describe('Settlement', function () {
 
             await time.setNextBlockTimestamp(announcedAt + 900);
             await expect(resolver.settleOrders(fillOrderToData)).to.be.revertedWithCustomError(settlement, 'AllowedTimeViolation');
+        });
+
+        it('fills an anchored native order (ETH maker via NativeOrderFactory)', async function () {
+            const signedStart = await time.latest() - 1000; // if not anchored, the auction would be finished already
+            const setupData = {
+                ...await loadFixture(initContractsForSettlement),
+                auction: await buildAuctionDetails({ startTime: signedStart, duration: 1800, initialRateBump: 1000000n, anchored: true }),
+            };
+            const {
+                contracts: { dai, weth, accessToken, lopv4, settlement, resolver, orderRegistrator },
+                accounts: { owner, alice },
+                others: { abiCoder },
+            } = setupData;
+
+            const nativeOrderFactory = await deployContract('NativeOrderFactory', [
+                weth, lopv4, accessToken, 60, '1inch Limit Order Protocol', '4',
+            ]);
+
+            // Alice sells 0.1 native ETH for 100 DAI through the anchored dutch auction
+            const order = buildOrder(
+                {
+                    maker: alice.address,
+                    receiver: alice.address,
+                    makerAsset: await weth.getAddress(),
+                    takerAsset: await dai.getAddress(),
+                    makingAmount: ether('0.1'),
+                    takingAmount: ether('100'),
+                    makerTraits: buildMakerTraits(),
+                },
+                buildSettlementExtensions({
+                    feeTaker: await settlement.getAddress(),
+                    estimatedTakingAmount: ether('100'),
+                    getterExtraPrefix: setupData.auction.details,
+                    whitelistPostInteraction: ethers.solidityPacked(['uint32', 'uint8'], [ANCHOR_FLAG + signedStart, 0]),
+                }),
+            );
+
+            const createTx = await nativeOrderFactory.connect(alice).create(order, { value: order.makingAmount });
+            const receipt = await createTx.wait();
+            const createdEvent = receipt.logs
+                .map((log) => { try { return nativeOrderFactory.interface.parseLog(log); } catch { return null; } })
+                .find((parsed) => parsed && parsed.name === 'NativeOrderCreated');
+            const clone = createdEvent.args.clone;
+            expect(await weth.balanceOf(clone)).to.equal(order.makingAmount);
+
+            // The signature for 1271 validation is the original maker order, then the fill order uses the clone as maker
+            const signature = abiCoder.encode([ABIOrder], [order]);
+            order.maker = clone;
+            const orderHash = await lopv4.hashOrder(order);
+
+            const resolverCalldata = abiCoder.encode(
+                ['address[]', 'bytes[]'],
+                [
+                    [await dai.getAddress()],
+                    [
+                        dai.interface.encodeFunctionData('transferFrom', [
+                            owner.address,
+                            await resolver.getAddress(),
+                            ether('105'),
+                        ]),
+                    ],
+                ],
+            );
+            const takerTraits = buildTakerTraits({
+                threshold: ether('0.1'),
+                extension: order.extension,
+                interaction: await resolver.getAddress() + '01' + trim0x(resolverCalldata),
+                target: await resolver.getAddress(),
+            });
+            const fillOrderToData = lopv4.interface.encodeFunctionData('fillContractOrderArgs', [
+                order, signature, ether('105'), takerTraits.traits, takerTraits.args,
+            ]);
+            await dai.approve(resolver, ether('105'));
+
+            // Fail-closed until the order is announced
+            await expect(resolver.settleOrders(fillOrderToData)).to.be.revertedWithCustomError(settlement, 'OrderNotAnnounced');
+
+            const announcedAt = await time.latest() + 10;
+            await orderRegistrator.setAnnouncedAt(orderHash, announcedAt);
+
+            // Half of the auction duration passed since the announcement => half of the initial rate bump
+            await time.setNextBlockTimestamp(announcedAt + 900);
+            const txn = await resolver.settleOrders(fillOrderToData);
+            await expect(txn).to.changeTokenBalances(dai, [owner, alice], [ether('-105'), ether('105')]);
+            await expect(txn).to.changeTokenBalances(weth, [clone, resolver], [ether('-0.1'), ether('0.1')]);
         });
     });
 

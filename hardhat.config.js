@@ -73,6 +73,7 @@ module.exports = {
             '@1inch/solidity-utils/contracts/mocks/ERC20PermitMock.sol',
             '@1inch/st1inch/contracts/St1inch.sol',
             '@1inch/limit-order-protocol-contract/contracts/LimitOrderProtocol.sol',
+            '@1inch/limit-order-protocol-contract/contracts/extensions/NativeOrderFactory.sol',
             '@1inch/limit-order-protocol-contract/contracts/mocks/WrappedTokenMock.sol',
         ],
     },

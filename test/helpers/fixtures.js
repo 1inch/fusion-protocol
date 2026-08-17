@@ -32,7 +32,7 @@ async function initContractsForSettlement() {
     await weth.deposit({ value: ether('1') });
     await weth.connect(alice).deposit({ value: ether('1') });
 
-    const orderRegistrator = await deployContract('OrderRegistratorMock');
+    const orderRegistrator = await deployContract('OrderRegistratorMock', [lopv4]);
     const settlement = await deployContract('SimpleSettlement', [lopv4, accessToken, weth, owner, orderRegistrator]);
 
     const ResolverMock = await ethers.getContractFactory('ResolverMock');

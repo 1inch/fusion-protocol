@@ -6,7 +6,7 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { IOrderMixin } from "@1inch/limit-order-protocol-contract/contracts/interfaces/IOrderMixin.sol";
 import { FeeTaker } from "@1inch/limit-order-protocol-contract/contracts/extensions/FeeTaker.sol";
-import { IOrderRegistrator } from "./interfaces/IOrderRegistrator.sol";
+import { IOrderRegistrator } from "@1inch/limit-order-protocol-contract/contracts/interfaces/IOrderRegistrator.sol";
 
 /**
  * @title Simple Settlement contract

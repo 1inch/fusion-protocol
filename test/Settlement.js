@@ -1,7 +1,7 @@
 const { ethers } = require('hardhat');
 const { loadFixture } = require('@nomicfoundation/hardhat-network-helpers');
 const { time, expect, ether, trim0x, timeIncreaseTo, getPermit, getPermit2, compressPermit, permit2Contract, deployContract } = require('@1inch/solidity-utils');
-const { ABIOrder, buildMakerTraits, buildOrder, buildTakerTraits } = require('@1inch/limit-order-protocol-contract/test/helpers/orderUtils');
+const { ABIOrder, buildMakerTraits, buildOrder, buildTakerTraits, signOrder } = require('@1inch/limit-order-protocol-contract/test/helpers/orderUtils');
 const { initContractsForSettlement } = require('./helpers/fixtures');
 const { ANCHOR_FLAG, buildAuctionDetails, buildCalldataForOrder, buildSettlementExtensions } = require('./helpers/fusionUtils');
 
@@ -860,7 +860,7 @@ describe('Settlement', function () {
     describe('anchored auction (order registration timestamp)', function () {
         const prepareAnchoredOrder = async ({ setupData, targetTakingAmount, whitelistAllowedTime = undefined }) => {
             const {
-                contracts: { dai, weth, lopv4, resolver },
+                contracts: { dai, weth, resolver },
                 accounts: { owner, alice },
                 others: { abiCoder },
             } = setupData;
@@ -900,7 +900,20 @@ describe('Settlement', function () {
             });
 
             await weth.approve(resolver, targetTakingAmount);
-            return { fillOrderToData, orderHash: await lopv4.hashOrder(order) };
+            return { fillOrderToData, order };
+        };
+
+        // Registers the order like production would: maker signature validated on-chain,
+        // `announcedAt` recorded at the registration block timestamp
+        const announceOrder = async (setupData, order, announcedAt) => {
+            const {
+                contracts: { lopv4, orderRegistrator },
+                accounts: { alice },
+                others: { chainId },
+            } = setupData;
+            const signature = await signOrder(order, chainId, await lopv4.getAddress(), alice);
+            await time.setNextBlockTimestamp(announcedAt);
+            await orderRegistrator.registerOrder(order, order.extension, signature);
         };
 
         it('cannot fill an anchored order before announcement', async function () {
@@ -922,14 +935,14 @@ describe('Settlement', function () {
                 auction: await buildAuctionDetails({ startTime: signedStart, duration: 1800, initialRateBump: 1000000n, anchored: true }),
             };
             const {
-                contracts: { dai, weth, resolver, orderRegistrator },
+                contracts: { dai, weth, resolver },
                 accounts: { owner, alice },
             } = setupData;
 
-            const { fillOrderToData, orderHash } = await prepareAnchoredOrder({ setupData, targetTakingAmount: ether('0.105') });
+            const { fillOrderToData, order } = await prepareAnchoredOrder({ setupData, targetTakingAmount: ether('0.105') });
 
             const announcedAt = await time.latest() + 10;
-            await orderRegistrator.setAnnouncedAt(orderHash, announcedAt);
+            await announceOrder(setupData, order, announcedAt);
 
             // Half of the auction duration passed since the announcement => half of the initial rate bump
             await time.setNextBlockTimestamp(announcedAt + 900);
@@ -944,17 +957,17 @@ describe('Settlement', function () {
                 auction: await buildAuctionDetails({ startTime: await time.latest() - 1000, duration: 3600, initialRateBump: 1000000n, anchored: true }),
             };
             const {
-                contracts: { resolver, settlement, orderRegistrator },
+                contracts: { resolver, settlement },
             } = setupData;
 
             const announcedAt = await time.latest() + 10;
-            const { fillOrderToData, orderHash } = await prepareAnchoredOrder({
+            const { fillOrderToData, order } = await prepareAnchoredOrder({
                 setupData,
                 targetTakingAmount: ether('0.11'),
                 whitelistAllowedTime: ANCHOR_FLAG + announcedAt + 1200, // signed allowed time is later than the announcement
             });
 
-            await orderRegistrator.setAnnouncedAt(orderHash, announcedAt);
+            await announceOrder(setupData, order, announcedAt);
 
             await time.setNextBlockTimestamp(announcedAt + 900);
             await expect(resolver.settleOrders(fillOrderToData)).to.be.revertedWithCustomError(settlement, 'AllowedTimeViolation');
@@ -1006,7 +1019,6 @@ describe('Settlement', function () {
             // The signature for 1271 validation is the original maker order, then the fill order uses the clone as maker
             const signature = abiCoder.encode([ABIOrder], [order]);
             order.maker = clone;
-            const orderHash = await lopv4.hashOrder(order);
 
             const resolverCalldata = abiCoder.encode(
                 ['address[]', 'bytes[]'],
@@ -1035,8 +1047,10 @@ describe('Settlement', function () {
             // Fail-closed until the order is announced
             await expect(resolver.settleOrders(fillOrderToData)).to.be.revertedWithCustomError(settlement, 'OrderNotAnnounced');
 
+            // Announce through the real registrator: the clone validates the signature via ERC-1271
             const announcedAt = await time.latest() + 10;
-            await orderRegistrator.setAnnouncedAt(orderHash, announcedAt);
+            await time.setNextBlockTimestamp(announcedAt);
+            await orderRegistrator.registerOrder(order, order.extension, signature);
 
             // Half of the auction duration passed since the announcement => half of the initial rate bump
             await time.setNextBlockTimestamp(announcedAt + 900);

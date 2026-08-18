@@ -96,7 +96,7 @@ async function buildAuctionDetails({
     delay = 0,
     initialRateBump = 0,
     points = [],
-    anchored = false, // sets the top bit of the start time to anchor the auction to OrderRegistrator.registeredAt
+    anchored = false, // sets the top bit of the start time to anchor the auction to OrderRegistrator.announcedAt
 } = {}) {
     startTime = startTime || await time.latest();
     let details = ethers.solidityPacked(

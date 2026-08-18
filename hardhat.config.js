@@ -28,7 +28,7 @@ networks.hardhat = Object.assign(networks.hardhat, {
 });
 
 const DEFAULT_COMPILER_SETTINGS = {
-    version: '0.8.30',
+    version: '0.8.23',
     settings: {
         optimizer: {
             enabled: true,
@@ -39,12 +39,13 @@ const DEFAULT_COMPILER_SETTINGS = {
     },
 };
 
-const LOW_OPTIMIZER_COMPILER_SETTINGS = JSON.parse(JSON.stringify(DEFAULT_COMPILER_SETTINGS));
-LOW_OPTIMIZER_COMPILER_SETTINGS.settings.optimizer.runs = 200;
+// @1inch/limit-order-protocol-contract implementations pin solidity 0.8.30 exactly,
+// so the settlement contracts deriving from FeeTaker compile with this profile
+const LOP_COMPILER_SETTINGS = JSON.parse(JSON.stringify(DEFAULT_COMPILER_SETTINGS));
+LOP_COMPILER_SETTINGS.version = '0.8.30';
 
-// @1inch/st1inch pins solidity 0.8.23 exactly
-const LEGACY_COMPILER_SETTINGS = JSON.parse(JSON.stringify(DEFAULT_COMPILER_SETTINGS));
-LEGACY_COMPILER_SETTINGS.version = '0.8.23';
+const LOW_OPTIMIZER_COMPILER_SETTINGS = JSON.parse(JSON.stringify(LOP_COMPILER_SETTINGS));
+LOW_OPTIMIZER_COMPILER_SETTINGS.settings.optimizer.runs = 200;
 
 module.exports = {
     etherscan,
@@ -52,7 +53,7 @@ module.exports = {
         enableAllOpcodes: true,
     },
     solidity: {
-        compilers: [DEFAULT_COMPILER_SETTINGS, LEGACY_COMPILER_SETTINGS],
+        compilers: [DEFAULT_COMPILER_SETTINGS, LOP_COMPILER_SETTINGS],
         overrides: {
             '@1inch/limit-order-protocol-contract/contracts/LimitOrderProtocol.sol': LOW_OPTIMIZER_COMPILER_SETTINGS,
             'contracts/hardhat-dependency-compiler/@1inch/limit-order-protocol-contract/contracts/LimitOrderProtocol.sol': LOW_OPTIMIZER_COMPILER_SETTINGS,
@@ -74,6 +75,7 @@ module.exports = {
             '@1inch/st1inch/contracts/St1inch.sol',
             '@1inch/limit-order-protocol-contract/contracts/LimitOrderProtocol.sol',
             '@1inch/limit-order-protocol-contract/contracts/extensions/NativeOrderFactory.sol',
+            '@1inch/limit-order-protocol-contract/contracts/helpers/OrderRegistrator.sol',
             '@1inch/limit-order-protocol-contract/contracts/mocks/WrappedTokenMock.sol',
         ],
     },

@@ -33,7 +33,7 @@
   },
   "dependencies": {
     "@1inch/delegating": "1.1.0",
-    "@1inch/limit-order-protocol-contract": "1inch/limit-order-protocol#e710e940f75a1063eb3d580de4e3fe60eea0c780",
+    "@1inch/limit-order-protocol-contract": "1inch/limit-order-protocol#c4970e319d309fb605185b65b36162f5ece3abd6",
     "@1inch/solidity-utils": "6.9.10",
     "@1inch/st1inch": "2.2.0",
     "@openzeppelin/contracts": "5.1.0"

@@ -4,7 +4,7 @@ pragma solidity 0.8.30;
 
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { IOrderMixin } from "@1inch/limit-order-protocol-contract/contracts/interfaces/IOrderMixin.sol";
-import { IOrderRegistrator } from "../interfaces/IOrderRegistrator.sol";
+import { IOrderRegistrator } from "@1inch/limit-order-protocol-contract/contracts/interfaces/IOrderRegistrator.sol";
 import { SimpleSettlement } from "../SimpleSettlement.sol";
 
 contract GasBumpChecker is SimpleSettlement {

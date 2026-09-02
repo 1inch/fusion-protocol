@@ -129,7 +129,7 @@ make deploy-settlement            # also: deploy-access-token, deploy-power-pod,
 make get OPS_NETWORK=mainnet PARAMETER=OPS_SETTLEMENT_ADDRESS   # read an address back out of deployments/
 ```
 
-Parameters are read from a `.env` file as `OPS_*` variables. `OPS_NETWORK` and `OPS_CHAIN_ID` are always required; each target validates its own additions, so `deploy-settlement`, for example, also needs `OPS_ROUTER_V6_ADDRESS`, `OPS_ACCESS_TOKEN_ADDRESS`, `OPS_WETH_ADDRESS` and `OPS_SETTLEMENT_OWNER_ADDRESS`. Contracts are deployed through a CREATE3 deployer so that the same address is used on every chain, which needs `OPS_CREATE3_DEPLOYER_ADDRESS` and a salt; zkSync Era does not support CREATE3 and falls back to a plain deployment.
+Parameters are read from a `.env` file as `OPS_*` variables. `OPS_NETWORK` and `OPS_CHAIN_ID` are always required; each target validates its own additions, so `deploy-settlement`, for example, also needs `OPS_ROUTER_V6_ADDRESS`, `OPS_ACCESS_TOKEN_ADDRESS`, `OPS_WETH_ADDRESS`, `OPS_SETTLEMENT_OWNER_ADDRESS` and `OPS_ORDER_REGISTRATOR_ADDRESS`. The OrderRegistrator must implement the `announcedAt(bytes32)` getter introduced in Limit Order Protocol 4.3.5. Contracts are deployed through a CREATE3 deployer so that the same address is used on every chain, which needs `OPS_CREATE3_DEPLOYER_ADDRESS` and a salt; zkSync Era does not support CREATE3 and falls back to a plain deployment.
 
 ## Audits
 

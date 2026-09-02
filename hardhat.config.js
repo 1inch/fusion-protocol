@@ -39,7 +39,12 @@ const DEFAULT_COMPILER_SETTINGS = {
     },
 };
 
-const LOW_OPTIMIZER_COMPILER_SETTINGS = JSON.parse(JSON.stringify(DEFAULT_COMPILER_SETTINGS));
+// @1inch/limit-order-protocol-contract implementations pin solidity 0.8.30 exactly,
+// so the settlement contracts deriving from FeeTaker compile with this profile
+const LOP_COMPILER_SETTINGS = JSON.parse(JSON.stringify(DEFAULT_COMPILER_SETTINGS));
+LOP_COMPILER_SETTINGS.version = '0.8.30';
+
+const LOW_OPTIMIZER_COMPILER_SETTINGS = JSON.parse(JSON.stringify(LOP_COMPILER_SETTINGS));
 LOW_OPTIMIZER_COMPILER_SETTINGS.settings.optimizer.runs = 200;
 
 // @1inch/st1inch (compiled for tests via dependencyCompiler) pins solidity 0.8.23 exactly
@@ -73,6 +78,8 @@ module.exports = {
             '@1inch/solidity-utils/contracts/mocks/ERC20PermitMock.sol',
             '@1inch/st1inch/contracts/St1inch.sol',
             '@1inch/limit-order-protocol-contract/contracts/LimitOrderProtocol.sol',
+            '@1inch/limit-order-protocol-contract/contracts/extensions/NativeOrderFactory.sol',
+            '@1inch/limit-order-protocol-contract/contracts/helpers/OrderRegistrator.sol',
             '@1inch/limit-order-protocol-contract/contracts/mocks/WrappedTokenMock.sol',
         ],
     },

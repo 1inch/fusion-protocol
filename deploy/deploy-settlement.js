@@ -9,18 +9,36 @@ module.exports = async ({ getNamedAccounts, deployments, config }) => {
     const chainId = await getChainId();
     console.log('network id ', chainId);
 
-    if (
-        networkName in hre.config.networks &&
-        chainId !== hre.config.networks[networkName].chainId?.toString()
-    ) {
+    if (networkName in hre.config.networks && chainId !== hre.config.networks[networkName].chainId?.toString()) {
         console.log(`network chain id: ${hre.config.networks[networkName].chainId}, your chain id ${chainId}`);
         console.log('skipping wrong chain id deployment');
         return;
     }
 
     let DEPLOYMENT_METHOD = config.deployOpts?.deploymentMethod || 'create3';
-    if (networkName.indexOf('zksync') !== -1) { // create3 is not supported for zksync
+    if (networkName.indexOf('zksync') !== -1) {
+        // create3 is not supported for zksync
         DEPLOYMENT_METHOD = 'create';
+    }
+
+    const orderRegistratorAddress = constants.ORDER_REGISTRATOR_ADDRESS[chainId];
+    if (!ethers.isAddress(orderRegistratorAddress) || orderRegistratorAddress === ethers.ZeroAddress) {
+        throw new Error(`Invalid OrderRegistrator address for chain ${chainId}: ${orderRegistratorAddress}`);
+    }
+
+    const orderRegistratorInterface = new ethers.Interface([
+        'function announcedAt(bytes32 orderHash) external view returns (uint256 timestamp)',
+    ]);
+    try {
+        const result = await ethers.provider.call({
+            to: orderRegistratorAddress,
+            data: orderRegistratorInterface.encodeFunctionData('announcedAt', [ethers.ZeroHash]),
+        });
+        orderRegistratorInterface.decodeFunctionResult('announcedAt', result);
+    } catch (error) {
+        throw new Error(`OrderRegistrator at ${orderRegistratorAddress} does not implement announcedAt(bytes32)`, {
+            cause: error,
+        });
     }
 
     const constructorArgs = [
@@ -28,8 +46,7 @@ module.exports = async ({ getNamedAccounts, deployments, config }) => {
         constants.ACCESS_TOKEN_ADDRESS[chainId],
         constants.WETH[chainId],
         constants.SETTLEMENT_OWNER_ADDRESS[chainId],
-        // Anchored orders are fail-closed: with the zero registrator they revert until the address is configured
-        constants.ORDER_REGISTRATOR_ADDRESS?.[chainId] ?? ethers.ZeroAddress,
+        orderRegistratorAddress,
     ];
 
     const deploymentName = 'SimpleSettlement';

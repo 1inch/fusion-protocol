@@ -11,6 +11,7 @@ OPS_CHAIN_ID := $(subst ",,$(OPS_CHAIN_ID))
 OPS_KYC_TOKEN_SUFFIX := $(subst ",,$(OPS_KYC_TOKEN_SUFFIX))
 OPS_DEPLOYMENT_METHOD := $(subst ",,$(OPS_DEPLOYMENT_METHOD))
 OPS_SKIP_VERIFY := $(subst ",,$(OPS_SKIP_VERIFY))
+OPS_ORDER_REGISTRATOR_ADDRESS := $(subst ",,$(OPS_ORDER_REGISTRATOR_ADDRESS))
 OPS_MINT_TO := $(subst ",,$(OPS_MINT_TO))
 OPS_MINT_TOKEN_ID := $(subst ",,$(OPS_MINT_TOKEN_ID))
 OPS_CONTRACT_ADDRESS := $(subst ",,$(OPS_CONTRACT_ADDRESS))
@@ -84,11 +85,12 @@ validate-settlement:
 		$(MAKE) ID=OPS_ACCESS_TOKEN_ADDRESS validate || exit 1; \
 		$(MAKE) ID=OPS_WETH_ADDRESS validate || exit 1; \
 		$(MAKE) ID=OPS_SETTLEMENT_OWNER_ADDRESS validate || exit 1; \
+		$(MAKE) ID=OPS_ORDER_REGISTRATOR_ADDRESS validate || exit 1; \
 		if [ "$(IS_ZKSYNC)" = "" ] && [ "$(OPS_DEPLOYMENT_METHOD)" != "create" ]; then \
 			$(MAKE) ID=OPS_CREATE3_DEPLOYER_ADDRESS validate || exit 1; \
 			$(MAKE) ID=OPS_SETTLEMENT_SALT validate || exit 1; \
 		fi; \
-		$(MAKE) process-router-v6 process-access-token-address process-weth process-settlement-owner process-settlement-salt process-create3-deployer || exit 1; \
+		$(MAKE) process-router-v6 process-access-token-address process-weth process-settlement-owner process-order-registrator process-settlement-salt process-create3-deployer || exit 1; \
 		}
 
 validate-power-pod:
@@ -192,6 +194,9 @@ process-whitelist-registry:
 
 process-settlement-owner:
 		@$(MAKE) OPS_GEN_KEY='settlementOwnerAddress' OPS_GEN_VAL='$(OPS_SETTLEMENT_OWNER_ADDRESS)' upsert-constant
+
+process-order-registrator:
+		@$(MAKE) OPS_GEN_KEY='orderRegistratorAddress' OPS_GEN_VAL='$(OPS_ORDER_REGISTRATOR_ADDRESS)' upsert-constant
 
 process-settlement-salt:
 		@{ \
@@ -339,6 +344,7 @@ help:
 	@echo "  process-access-token-owner  Update access token owner constant"
 	@echo "  process-access-token-salt   Update access token salt constant"
 	@echo "  process-settlement-owner    Update settlement owner constant"
+	@echo "  process-order-registrator   Update OrderRegistrator address constant"
 	@echo "  process-settlement-salt     Update settlement salt constant"
 	@echo "  process-router-v6          Update router V6 address constant"
 	@echo "  process-weth               Update WETH address constant"
@@ -367,4 +373,4 @@ help:
 	@echo "  help                       Show this help message"
 
 
-.PHONY: help deploy-access-token deploy-settlement deploy-power-pod deploy-whitelist-registry deploy-crosschain-whitelist deploy-resolver-metadata deploy-impl validate-base validate-access-token validate-settlement validate-power-pod validate-whitelist-registry validate-crosschain-whitelist validate-resolver-metadata validate-mint-kyc validate-transfer-ownership process-access-token-owner process-access-token-salt process-access-token-address process-settlement-owner process-settlement-salt process-router-v6 process-weth process-st1inch process-power-pod process-dao process-whitelist-registry process-create3-deployer process-mint-to process-mint-token-id process-contract-address process-new-owner upsert-constant deploy-skip-all deploy-skip deploy-noskip install install-utils install-dependencies clean get get-outputs validate mint-kyc mint-kyc-impl transfer-ownership transfer-ownership-impl
+.PHONY: help deploy-access-token deploy-settlement deploy-power-pod deploy-whitelist-registry deploy-crosschain-whitelist deploy-resolver-metadata deploy-impl validate-base validate-access-token validate-settlement validate-power-pod validate-whitelist-registry validate-crosschain-whitelist validate-resolver-metadata validate-mint-kyc validate-transfer-ownership process-access-token-owner process-access-token-salt process-access-token-address process-settlement-owner process-order-registrator process-settlement-salt process-router-v6 process-weth process-st1inch process-power-pod process-dao process-whitelist-registry process-create3-deployer process-mint-to process-mint-token-id process-contract-address process-new-owner upsert-constant deploy-skip-all deploy-skip deploy-noskip install install-utils install-dependencies clean get get-outputs validate mint-kyc mint-kyc-impl transfer-ownership transfer-ownership-impl

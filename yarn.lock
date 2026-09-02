@@ -21,12 +21,12 @@
     "@1inch/token-plugins" "1.3.0"
     "@openzeppelin/contracts" "5.0.1"
 
-"@1inch/limit-order-protocol-contract@4.3.2":
-  version "4.3.2"
-  resolved "https://registry.yarnpkg.com/@1inch/limit-order-protocol-contract/-/limit-order-protocol-contract-4.3.2.tgz#10f85819a39342897c0c27177b13218423717f7b"
-  integrity sha512-tDHDOsiOfZYobCWqioGi7n/Kw57SkGpqAQCgArzJO6GSM/V3GgBrzSoc8l7UlxH7XNpVKVN2PfFfozvnOug2hw==
+"@1inch/limit-order-protocol-contract@4.3.3":
+  version "4.3.3"
+  resolved "https://registry.yarnpkg.com/@1inch/limit-order-protocol-contract/-/limit-order-protocol-contract-4.3.3.tgz#3673d1de144d0f5ba975456066be34ebdfb0ea0b"
+  integrity sha512-6XMwL0+s763I8WWLnRT/pqtnp8vZYUhKFMnM5BJ9TpahC1tydnEE6arihQZd8LG9gJbXMFtJtmAr4Ay3Iks5CQ==
   dependencies:
-    "@1inch/solidity-utils" "6.4.1"
+    "@1inch/solidity-utils" "6.6.0"
     "@chainlink/contracts" "0.8.0"
     "@gnosis.pm/safe-contracts" "1.3.0"
     "@openzeppelin/contracts" "5.1.0"
@@ -49,10 +49,10 @@
     hardhat "2.19.2"
     hardhat-deploy "0.11.44"
 
-"@1inch/solidity-utils@6.4.1":
-  version "6.4.1"
-  resolved "https://registry.yarnpkg.com/@1inch/solidity-utils/-/solidity-utils-6.4.1.tgz#6269fce53c64b66cde35256db09d791f4b6a8822"
-  integrity sha512-nH/i+AsooEt3bMaKIlSG/++gkrOJqvT6shHxq0NDRnZpV21GbL3VdG+pLxaQRA8uIzQ10CUemJHTxJVI1Rt3xQ==
+"@1inch/solidity-utils@6.6.0":
+  version "6.6.0"
+  resolved "https://registry.yarnpkg.com/@1inch/solidity-utils/-/solidity-utils-6.6.0.tgz#2b805c250996b637e8bfe0a66a8107bd10447157"
+  integrity sha512-BZTN/oE6ttqPXH/nI1iYO2lPZZSinQibUvXDZGYRzXooncN+n6VELPCCIzoUqV+CoYb6ULYHk+DDlCKFQ/1peA==
   dependencies:
     "@metamask/eth-sig-util" "8.0.0"
     "@nomicfoundation/hardhat-ethers" "3.0.8"

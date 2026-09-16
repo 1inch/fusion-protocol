@@ -15,10 +15,8 @@ import { IOrderRegistrator } from "@1inch/limit-order-protocol-contract/contract
 contract SimpleSettlement is FeeTaker {
     using Math for uint256;
 
-    /// @dev Top bit of a uint32 timestamp (auction start time / whitelist allowed time) opts the order
-    /// into anchoring: effective time = max(timestamp without the flag, OrderRegistrator.announcedAt(orderHash)).
+    /// @dev Top bit of a uint32 timestamp anchors it to `announcedAt(orderHash)`; the remaining bits are ignored.
     uint256 private constant _ANCHOR_FLAG_MASK = 1 << 31;
-    uint256 private constant _ANCHOR_TIMESTAMP_MASK = _ANCHOR_FLAG_MASK - 1;
 
     uint256 private constant _BASE_POINTS = 10_000_000; // 100%
     uint256 private constant _GAS_PRICE_BASE = 1_000_000; // 1000 means 1 Gwei
@@ -142,7 +140,7 @@ contract SimpleSettlement is FeeTaker {
             uint80 maskedTakerAddress = uint80(uint160(taker));
             uint256 allowedTime = uint32(bytes4(whitelistData));
             if (allowedTime & _ANCHOR_FLAG_MASK != 0) {
-                allowedTime = _anchoredTime(allowedTime, orderHash);
+                allowedTime = _anchoredTime(orderHash);
             }
             uint256 size = uint8(whitelistData[4]);
             bytes calldata whitelist = whitelistData[5:5 + 12 * size];
@@ -190,7 +188,7 @@ contract SimpleSettlement is FeeTaker {
             uint256 gasBump = gasBumpEstimate == 0 || gasPriceEstimate == 0 ? 0 : gasBumpEstimate * block.basefee / gasPriceEstimate / _GAS_PRICE_BASE;
             uint256 auctionStartTime = uint32(bytes4(auctionDetails[7:11]));
             if (auctionStartTime & _ANCHOR_FLAG_MASK != 0) {
-                auctionStartTime = _anchoredTime(auctionStartTime, orderHash);
+                auctionStartTime = _anchoredTime(orderHash);
             }
             uint256 auctionFinishTime = auctionStartTime + uint24(bytes3(auctionDetails[11:14]));
             uint256 initialRateBump = uint24(bytes3(auctionDetails[14:17]));
@@ -242,16 +240,10 @@ contract SimpleSettlement is FeeTaker {
         }
     }
 
-    /**
-     * @dev Resolves a flagged timestamp to the effective anchored time.
-     * Reverts if the order was not announced, so anchored orders cannot be filled before announcement.
-     * @param flaggedTime The uint32 timestamp with the anchor flag set.
-     * @param orderHash The hash of the order.
-     * @return The later of the signed timestamp and the announcement timestamp.
-     */
-    function _anchoredTime(uint256 flaggedTime, bytes32 orderHash) private view returns (uint256) {
+    /// @dev Returns the announcement timestamp, so an anchored order cannot be filled before it is announced.
+    function _anchoredTime(bytes32 orderHash) private view returns (uint256) {
         uint256 announcedTime = _ORDER_REGISTRATOR.announcedAt(orderHash);
         if (announcedTime == 0) revert OrderNotAnnounced();
-        return Math.max(flaggedTime & _ANCHOR_TIMESTAMP_MASK, announcedTime);
+        return announcedTime;
     }
 }

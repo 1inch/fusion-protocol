@@ -858,7 +858,7 @@ describe('Settlement', function () {
     });
 
     describe('anchored auction (order registration timestamp)', function () {
-        const prepareAnchoredOrder = async ({ setupData, targetTakingAmount, whitelistAllowedTime = undefined }) => {
+        const prepareAnchoredOrder = async ({ setupData, targetTakingAmount, whitelistAllowedTime = undefined, whitelistResolvers = [], resolversAllowedTime = [] }) => {
             const {
                 contracts: { dai, weth, resolver },
                 accounts: { owner, alice },
@@ -896,6 +896,8 @@ describe('Settlement', function () {
                 isMakingAmount: false,
                 fillingAmount: targetTakingAmount,
                 whitelistAllowedTime,
+                whitelistResolvers,
+                resolversAllowedTime,
                 returnOrder: true,
             });
 
@@ -903,8 +905,7 @@ describe('Settlement', function () {
             return { fillOrderToData, order };
         };
 
-        // Registers the order like production would: maker signature validated on-chain,
-        // `announcedAt` recorded at the registration block timestamp
+        // Registers through the real registrator: signature checked on-chain, `announcedAt` = block timestamp
         const announceOrder = async (setupData, order, announcedAt) => {
             const {
                 contracts: { lopv4, orderRegistrator },
@@ -929,7 +930,7 @@ describe('Settlement', function () {
         });
 
         it('starts auction from the announcement timestamp', async function () {
-            const signedStart = await time.latest() - 1000; // if not anchored, the auction would be finished already
+            const signedStart = await time.latest() - 1000; // unanchored, this auction would be over already
             const setupData = {
                 ...await loadFixture(initContractsForSettlement),
                 auction: await buildAuctionDetails({ startTime: signedStart, duration: 1800, initialRateBump: 1000000n, anchored: true }),
@@ -944,37 +945,70 @@ describe('Settlement', function () {
             const announcedAt = await time.latest() + 10;
             await announceOrder(setupData, order, announcedAt);
 
-            // Half of the auction duration passed since the announcement => half of the initial rate bump
+            // Half the auction elapsed since the announcement => half the initial bump
             await time.setNextBlockTimestamp(announcedAt + 900);
             const txn = await resolver.settleOrders(fillOrderToData);
             await expect(txn).to.changeTokenBalances(dai, [resolver, alice], [ether('100'), ether('-100')]);
             await expect(txn).to.changeTokenBalances(weth, [owner, alice], [ether('-0.105'), ether('0.105')]);
         });
 
-        it('anchored exclusivity respects the later signed allowed time', async function () {
+        it('anchored allowed time ignores the signed timestamp bits', async function () {
             const setupData = {
                 ...await loadFixture(initContractsForSettlement),
-                auction: await buildAuctionDetails({ startTime: await time.latest() - 1000, duration: 3600, initialRateBump: 1000000n, anchored: true }),
+                auction: await buildAuctionDetails({ startTime: await time.latest() - 1000, duration: 1800, initialRateBump: 1000000n, anchored: true }),
             };
             const {
-                contracts: { resolver, settlement },
+                contracts: { dai, weth, resolver },
+                accounts: { owner, alice },
             } = setupData;
 
             const announcedAt = await time.latest() + 10;
             const { fillOrderToData, order } = await prepareAnchoredOrder({
                 setupData,
-                targetTakingAmount: ether('0.11'),
-                whitelistAllowedTime: ANCHOR_FLAG + announcedAt + 1200, // signed allowed time is later than the announcement
+                targetTakingAmount: ether('0.105'),
+                whitelistAllowedTime: ANCHOR_FLAG + announcedAt + 1200, // bits are past the fill time, but ignored
             });
 
             await announceOrder(setupData, order, announcedAt);
 
+            // Allowed time is the announcement itself, so the fill passes
+            await time.setNextBlockTimestamp(announcedAt + 900);
+            const txn = await resolver.settleOrders(fillOrderToData);
+            await expect(txn).to.changeTokenBalances(dai, [resolver, alice], [ether('100'), ether('-100')]);
+            await expect(txn).to.changeTokenBalances(weth, [owner, alice], [ether('-0.105'), ether('0.105')]);
+        });
+
+        it('anchored whitelist time deltas count from the announcement timestamp', async function () {
+            const setupData = {
+                ...await loadFixture(initContractsForSettlement),
+                auction: await buildAuctionDetails({ startTime: await time.latest() - 1000, duration: 3600, initialRateBump: 1000000n, anchored: true }),
+            };
+            const {
+                contracts: { dai, resolver, settlement },
+                accounts: { alice, bob },
+            } = setupData;
+
+            const { fillOrderToData, order } = await prepareAnchoredOrder({
+                setupData,
+                targetTakingAmount: ether('0.11'),
+                // bob is exclusive for 1200s after the announcement, then the resolver
+                whitelistResolvers: ['0x' + bob.address.substring(22), '0x' + resolver.target.substring(22)],
+                resolversAllowedTime: [1200, 0],
+            });
+
+            const announcedAt = await time.latest() + 10;
+            await announceOrder(setupData, order, announcedAt);
+
             await time.setNextBlockTimestamp(announcedAt + 900);
             await expect(resolver.settleOrders(fillOrderToData)).to.be.revertedWithCustomError(settlement, 'AllowedTimeViolation');
+
+            await time.setNextBlockTimestamp(announcedAt + 1200);
+            const txn = await resolver.settleOrders(fillOrderToData);
+            await expect(txn).to.changeTokenBalances(dai, [resolver, alice], [ether('100'), ether('-100')]);
         });
 
         it('fills an anchored native order (ETH maker via NativeOrderFactory)', async function () {
-            const signedStart = await time.latest() - 1000; // if not anchored, the auction would be finished already
+            const signedStart = await time.latest() - 1000; // unanchored, this auction would be over already
             const setupData = {
                 ...await loadFixture(initContractsForSettlement),
                 auction: await buildAuctionDetails({ startTime: signedStart, duration: 1800, initialRateBump: 1000000n, anchored: true }),
@@ -989,7 +1023,7 @@ describe('Settlement', function () {
                 weth, lopv4, accessToken, 60, '1inch Limit Order Protocol', '4',
             ]);
 
-            // Alice sells 0.1 native ETH for 100 DAI through the anchored dutch auction
+            // Alice sells 0.1 native ETH for 100 DAI
             const order = buildOrder(
                 {
                     maker: alice.address,
@@ -1016,7 +1050,7 @@ describe('Settlement', function () {
             const clone = createdEvent.args.clone;
             expect(await weth.balanceOf(clone)).to.equal(order.makingAmount);
 
-            // The signature for 1271 validation is the original maker order, then the fill order uses the clone as maker
+            // ERC-1271 validation takes the original maker order; the fill then uses the clone as maker
             const signature = abiCoder.encode([ABIOrder], [order]);
             order.maker = clone;
 
@@ -1047,12 +1081,11 @@ describe('Settlement', function () {
             // Fail-closed until the order is announced
             await expect(resolver.settleOrders(fillOrderToData)).to.be.revertedWithCustomError(settlement, 'OrderNotAnnounced');
 
-            // Announce through the real registrator: the clone validates the signature via ERC-1271
             const announcedAt = await time.latest() + 10;
             await time.setNextBlockTimestamp(announcedAt);
             await orderRegistrator.registerOrder(order, order.extension, signature);
 
-            // Half of the auction duration passed since the announcement => half of the initial rate bump
+            // Half the auction elapsed since the announcement => half the initial bump
             await time.setNextBlockTimestamp(announcedAt + 900);
             const txn = await resolver.settleOrders(fillOrderToData);
             await expect(txn).to.changeTokenBalances(dai, [owner, alice], [ether('-105'), ether('105')]);

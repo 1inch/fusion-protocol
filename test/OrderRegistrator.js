@@ -4,8 +4,8 @@ const { expect, deployContract } = require('@1inch/solidity-utils');
 const { buildOrder, signOrder } = require('@1inch/limit-order-protocol-contract/test/helpers/orderUtils');
 const { initContractsForSettlement } = require('./helpers/fixtures');
 
-// The anchored auction trusts the package OrderRegistrator to record `announcedAt` exactly once;
-// these tests pin that upstream invariant so a dependency bump cannot silently change it.
+// Anchoring relies on the package OrderRegistrator recording `announcedAt` exactly once,
+// so these tests pin the upstream invariant against a dependency bump.
 describe('OrderRegistrator', function () {
     async function prepareOrder() {
         const setupData = await loadFixture(initContractsForSettlement);

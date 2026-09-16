@@ -4,7 +4,7 @@ const { buildOrder, buildTakerTraits, signOrder, buildFeeTakerExtensions } = req
 
 const expBase = 999999952502977513n; // 0.05^(1/(2 years)) means 95% value loss over 2 years}
 
-const ANCHOR_FLAG = 0x80000000; // top bit of uint32 timestamps opts into OrderRegistrator anchoring
+const ANCHOR_FLAG = 0x80000000; // top bit of a uint32 timestamp opts into anchoring
 
 async function buildCalldataForOrder({
     orderData,
@@ -24,7 +24,7 @@ async function buildCalldataForOrder({
     whitelistResolvers = [], // bytes10[]
     resolversAllowedTime = [], // uint16[]
     customPostInteraction = '0x',
-    whitelistAllowedTime = undefined, // uint32, defaults to auction start time (with the anchor flag if anchored)
+    whitelistAllowedTime = undefined, // uint32, defaults to the auction start time (flagged when anchored)
     returnOrder = false,
 }) {
     const {
@@ -96,7 +96,7 @@ async function buildAuctionDetails({
     delay = 0,
     initialRateBump = 0,
     points = [],
-    anchored = false, // sets the top bit of the start time to anchor the auction to OrderRegistrator.announcedAt
+    anchored = false, // sets the top bit of the start time to anchor it to `announcedAt`
 } = {}) {
     startTime = startTime || await time.latest();
     let details = ethers.solidityPacked(

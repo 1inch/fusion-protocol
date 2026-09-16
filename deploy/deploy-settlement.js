@@ -9,15 +9,17 @@ module.exports = async ({ getNamedAccounts, deployments, config }) => {
     const chainId = await getChainId();
     console.log('network id ', chainId);
 
-    if (networkName in hre.config.networks && chainId !== hre.config.networks[networkName].chainId?.toString()) {
+    if (
+        networkName in hre.config.networks &&
+        chainId !== hre.config.networks[networkName].chainId?.toString()
+    ) {
         console.log(`network chain id: ${hre.config.networks[networkName].chainId}, your chain id ${chainId}`);
         console.log('skipping wrong chain id deployment');
         return;
     }
 
     let DEPLOYMENT_METHOD = config.deployOpts?.deploymentMethod || 'create3';
-    if (networkName.indexOf('zksync') !== -1) {
-        // create3 is not supported for zksync
+    if (networkName.indexOf('zksync') !== -1) { // create3 is not supported for zksync
         DEPLOYMENT_METHOD = 'create';
     }
 

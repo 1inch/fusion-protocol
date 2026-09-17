@@ -20,7 +20,7 @@ if (getNetwork().indexOf('zksync') !== -1) {
 
 const n = new Networks();
 const { networks } = n.registerAll();
-const etherscan = n.getEtherscanConfig(getNetwork());
+const etherscan = typeof n.getEtherscanConfig === 'function' ? n.getEtherscanConfig(getNetwork()) : {};
 
 networks.hardhat = Object.assign(networks.hardhat, {
     initialBaseFeePerGas: 1,

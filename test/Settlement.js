@@ -1,9 +1,9 @@
 const { ethers } = require('hardhat');
 const { loadFixture } = require('@nomicfoundation/hardhat-network-helpers');
 const { time, expect, ether, trim0x, timeIncreaseTo, getPermit, getPermit2, compressPermit, permit2Contract, deployContract } = require('@1inch/solidity-utils');
-const { buildMakerTraits } = require('@1inch/limit-order-protocol-contract/test/helpers/orderUtils');
+const { ABIOrder, buildMakerTraits, buildOrder, buildTakerTraits, signOrder } = require('@1inch/limit-order-protocol-contract/test/helpers/orderUtils');
 const { initContractsForSettlement } = require('./helpers/fixtures');
-const { buildAuctionDetails, buildCalldataForOrder } = require('./helpers/fusionUtils');
+const { ANCHOR_FLAG, buildAuctionDetails, buildCalldataForOrder, buildSettlementExtensions } = require('./helpers/fusionUtils');
 
 const ORDER_FEE = 100n;
 const BACK_ORDER_FEE = 125n;
@@ -854,6 +854,242 @@ describe('Settlement', function () {
                 await time.setNextBlockTimestamp(setupData.auction.startTime);
                 await expect(resolver.settleOrders(fillOrderToData)).to.be.revertedWithCustomError(settlement, 'InvalidEstimatedTakingAmount');
             });
+        });
+    });
+
+    describe('anchored auction (order registration timestamp)', function () {
+        const prepareAnchoredOrder = async ({ setupData, targetTakingAmount, whitelistAllowedTime = undefined, whitelistResolvers = [], resolversAllowedTime = [] }) => {
+            const {
+                contracts: { dai, weth, resolver },
+                accounts: { owner, alice },
+                others: { abiCoder },
+            } = setupData;
+
+            const resolverCalldata = abiCoder.encode(
+                ['address[]', 'bytes[]'],
+                [
+                    [await weth.getAddress()],
+                    [
+                        weth.interface.encodeFunctionData('transferFrom', [
+                            owner.address,
+                            await resolver.getAddress(),
+                            targetTakingAmount,
+                        ]),
+                    ],
+                ],
+            );
+
+            const { calldata: fillOrderToData, order } = await buildCalldataForOrder({
+                orderData: {
+                    maker: alice.address,
+                    makerAsset: await dai.getAddress(),
+                    takerAsset: await weth.getAddress(),
+                    makingAmount: ether('100'),
+                    takingAmount: ether('0.1'),
+                    makerTraits: buildMakerTraits(),
+                },
+                orderSigner: alice,
+                setupData,
+                threshold: ether('100'),
+                additionalDataForSettlement: resolverCalldata,
+                isInnermostOrder: true,
+                isMakingAmount: false,
+                fillingAmount: targetTakingAmount,
+                whitelistAllowedTime,
+                whitelistResolvers,
+                resolversAllowedTime,
+                returnOrder: true,
+            });
+
+            await weth.approve(resolver, targetTakingAmount);
+            return { fillOrderToData, order };
+        };
+
+        // Registers through the real registrator: signature checked on-chain, `announcedAt` = block timestamp
+        const announceOrder = async (setupData, order, announcedAt) => {
+            const {
+                contracts: { lopv4, orderRegistrator },
+                accounts: { alice },
+                others: { chainId },
+            } = setupData;
+            const signature = await signOrder(order, chainId, await lopv4.getAddress(), alice);
+            await time.setNextBlockTimestamp(announcedAt);
+            await orderRegistrator.registerOrder(order, order.extension, signature);
+        };
+
+        it('cannot fill an anchored order before announcement', async function () {
+            const setupData = {
+                ...await loadFixture(initContractsForSettlement),
+                auction: await buildAuctionDetails({ startTime: await time.latest() - 1000, initialRateBump: 1000000n, anchored: true }),
+            };
+            const { contracts: { resolver, settlement } } = setupData;
+
+            const { fillOrderToData } = await prepareAnchoredOrder({ setupData, targetTakingAmount: ether('0.11') });
+
+            await expect(resolver.settleOrders(fillOrderToData)).to.be.revertedWithCustomError(settlement, 'OrderNotAnnounced');
+        });
+
+        it('starts auction from the announcement timestamp', async function () {
+            const signedStart = await time.latest() - 1000; // unanchored, this auction would be over already
+            const setupData = {
+                ...await loadFixture(initContractsForSettlement),
+                auction: await buildAuctionDetails({ startTime: signedStart, duration: 1800, initialRateBump: 1000000n, anchored: true }),
+            };
+            const {
+                contracts: { dai, weth, resolver },
+                accounts: { owner, alice },
+            } = setupData;
+
+            const { fillOrderToData, order } = await prepareAnchoredOrder({ setupData, targetTakingAmount: ether('0.105') });
+
+            const announcedAt = await time.latest() + 10;
+            await announceOrder(setupData, order, announcedAt);
+
+            // Half the auction elapsed since the announcement => half the initial bump
+            await time.setNextBlockTimestamp(announcedAt + 900);
+            const txn = await resolver.settleOrders(fillOrderToData);
+            await expect(txn).to.changeTokenBalances(dai, [resolver, alice], [ether('100'), ether('-100')]);
+            await expect(txn).to.changeTokenBalances(weth, [owner, alice], [ether('-0.105'), ether('0.105')]);
+        });
+
+        it('anchored allowed time ignores the signed timestamp bits', async function () {
+            const setupData = {
+                ...await loadFixture(initContractsForSettlement),
+                auction: await buildAuctionDetails({ startTime: await time.latest() - 1000, duration: 1800, initialRateBump: 1000000n, anchored: true }),
+            };
+            const {
+                contracts: { dai, weth, resolver },
+                accounts: { owner, alice },
+            } = setupData;
+
+            const announcedAt = await time.latest() + 10;
+            const { fillOrderToData, order } = await prepareAnchoredOrder({
+                setupData,
+                targetTakingAmount: ether('0.105'),
+                whitelistAllowedTime: ANCHOR_FLAG + announcedAt + 1200, // bits are past the fill time, but ignored
+            });
+
+            await announceOrder(setupData, order, announcedAt);
+
+            // Allowed time is the announcement itself, so the fill passes
+            await time.setNextBlockTimestamp(announcedAt + 900);
+            const txn = await resolver.settleOrders(fillOrderToData);
+            await expect(txn).to.changeTokenBalances(dai, [resolver, alice], [ether('100'), ether('-100')]);
+            await expect(txn).to.changeTokenBalances(weth, [owner, alice], [ether('-0.105'), ether('0.105')]);
+        });
+
+        it('anchored whitelist time deltas count from the announcement timestamp', async function () {
+            const setupData = {
+                ...await loadFixture(initContractsForSettlement),
+                auction: await buildAuctionDetails({ startTime: await time.latest() - 1000, duration: 3600, initialRateBump: 1000000n, anchored: true }),
+            };
+            const {
+                contracts: { dai, resolver, settlement },
+                accounts: { alice, bob },
+            } = setupData;
+
+            const { fillOrderToData, order } = await prepareAnchoredOrder({
+                setupData,
+                targetTakingAmount: ether('0.11'),
+                // bob is exclusive for 1200s after the announcement, then the resolver
+                whitelistResolvers: ['0x' + bob.address.substring(22), '0x' + resolver.target.substring(22)],
+                resolversAllowedTime: [1200, 0],
+            });
+
+            const announcedAt = await time.latest() + 10;
+            await announceOrder(setupData, order, announcedAt);
+
+            await time.setNextBlockTimestamp(announcedAt + 900);
+            await expect(resolver.settleOrders(fillOrderToData)).to.be.revertedWithCustomError(settlement, 'AllowedTimeViolation');
+
+            await time.setNextBlockTimestamp(announcedAt + 1200);
+            const txn = await resolver.settleOrders(fillOrderToData);
+            await expect(txn).to.changeTokenBalances(dai, [resolver, alice], [ether('100'), ether('-100')]);
+        });
+
+        it('fills an anchored native order (ETH maker via NativeOrderFactory)', async function () {
+            const signedStart = await time.latest() - 1000; // unanchored, this auction would be over already
+            const setupData = {
+                ...await loadFixture(initContractsForSettlement),
+                auction: await buildAuctionDetails({ startTime: signedStart, duration: 1800, initialRateBump: 1000000n, anchored: true }),
+            };
+            const {
+                contracts: { dai, weth, accessToken, lopv4, settlement, resolver, orderRegistrator },
+                accounts: { owner, alice },
+                others: { abiCoder },
+            } = setupData;
+
+            const nativeOrderFactory = await deployContract('NativeOrderFactory', [
+                weth, lopv4, accessToken, 60, '1inch Limit Order Protocol', '4',
+            ]);
+
+            // Alice sells 0.1 native ETH for 100 DAI
+            const order = buildOrder(
+                {
+                    maker: alice.address,
+                    receiver: alice.address,
+                    makerAsset: await weth.getAddress(),
+                    takerAsset: await dai.getAddress(),
+                    makingAmount: ether('0.1'),
+                    takingAmount: ether('100'),
+                    makerTraits: buildMakerTraits(),
+                },
+                buildSettlementExtensions({
+                    feeTaker: await settlement.getAddress(),
+                    estimatedTakingAmount: ether('100'),
+                    getterExtraPrefix: setupData.auction.details,
+                    whitelistPostInteraction: ethers.solidityPacked(['uint32', 'uint8'], [ANCHOR_FLAG + signedStart, 0]),
+                }),
+            );
+
+            const createTx = await nativeOrderFactory.connect(alice).create(order, { value: order.makingAmount });
+            const receipt = await createTx.wait();
+            const createdEvent = receipt.logs
+                .map((log) => { try { return nativeOrderFactory.interface.parseLog(log); } catch { return null; } })
+                .find((parsed) => parsed && parsed.name === 'NativeOrderCreated');
+            const clone = createdEvent.args.clone;
+            expect(await weth.balanceOf(clone)).to.equal(order.makingAmount);
+
+            // ERC-1271 validation takes the original maker order; the fill then uses the clone as maker
+            const signature = abiCoder.encode([ABIOrder], [order]);
+            order.maker = clone;
+
+            const resolverCalldata = abiCoder.encode(
+                ['address[]', 'bytes[]'],
+                [
+                    [await dai.getAddress()],
+                    [
+                        dai.interface.encodeFunctionData('transferFrom', [
+                            owner.address,
+                            await resolver.getAddress(),
+                            ether('105'),
+                        ]),
+                    ],
+                ],
+            );
+            const takerTraits = buildTakerTraits({
+                threshold: ether('0.1'),
+                extension: order.extension,
+                interaction: await resolver.getAddress() + '01' + trim0x(resolverCalldata),
+                target: await resolver.getAddress(),
+            });
+            const fillOrderToData = lopv4.interface.encodeFunctionData('fillContractOrderArgs', [
+                order, signature, ether('105'), takerTraits.traits, takerTraits.args,
+            ]);
+            await dai.approve(resolver, ether('105'));
+
+            // Fail-closed until the order is announced
+            await expect(resolver.settleOrders(fillOrderToData)).to.be.revertedWithCustomError(settlement, 'OrderNotAnnounced');
+
+            const announcedAt = await time.latest() + 10;
+            await time.setNextBlockTimestamp(announcedAt);
+            await orderRegistrator.registerOrder(order, order.extension, signature);
+
+            // Half the auction elapsed since the announcement => half the initial bump
+            await time.setNextBlockTimestamp(announcedAt + 900);
+            const txn = await resolver.settleOrders(fillOrderToData);
+            await expect(txn).to.changeTokenBalances(dai, [owner, alice], [ether('-105'), ether('105')]);
+            await expect(txn).to.changeTokenBalances(weth, [clone, resolver], [ether('-0.1'), ether('0.1')]);
         });
     });
 

@@ -6,20 +6,27 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import { Math } from "@openzeppelin/contracts/utils/math/Math.sol";
 import { IOrderMixin } from "@1inch/limit-order-protocol-contract/contracts/interfaces/IOrderMixin.sol";
 import { FeeTaker } from "@1inch/limit-order-protocol-contract/contracts/extensions/FeeTaker.sol";
+import { IOrderRegistrator } from "@1inch/limit-order-protocol-contract/contracts/interfaces/IOrderRegistrator.sol";
 
 /**
  * @title Simple Settlement contract
  * @notice Contract to execute limit orders settlement, created by Fusion mode.
+ * @dev The top bit of the uint32 auction start time and whitelist allowed time anchors each independently
+ * to `OrderRegistrator.announcedAt(orderHash)`, ignoring the remaining bits. Unannounced orders revert.
  */
 contract SimpleSettlement is FeeTaker {
     using Math for uint256;
 
-    uint256 private constant _BASE_POINTS = 10_000_000; // 100%
-    uint256 private constant _GAS_PRICE_BASE = 1_000_000; // 1000 means 1 Gwei
-
     error AllowedTimeViolation();
     error InvalidProtocolSurplusFee();
     error InvalidEstimatedTakingAmount();
+    error OrderNotAnnounced();
+
+    uint256 private constant _ANCHOR_FLAG_MASK = 1 << 31;
+    uint256 private constant _BASE_POINTS = 10_000_000; // 100%
+    uint256 private constant _GAS_PRICE_BASE = 1_000_000; // 1000 means 1 Gwei
+
+    IOrderRegistrator private immutable _ORDER_REGISTRATOR;
 
     /**
      * @notice Initializes the contract.
@@ -27,14 +34,18 @@ contract SimpleSettlement is FeeTaker {
      * @param accessToken Contract address whose tokens allow filling limit orders with a fee for resolvers that are outside the whitelist.
      * @param weth The WETH address.
      * @param owner The owner of the contract.
+     * @param orderRegistrator The order registrator used to resolve anchored timestamps.
      */
-    constructor(address limitOrderProtocol, IERC20 accessToken, address weth, address owner)
+    constructor(address limitOrderProtocol, IERC20 accessToken, address weth, address owner, IOrderRegistrator orderRegistrator)
         FeeTaker(limitOrderProtocol, accessToken, weth, owner)
-    {}
+    {
+        _ORDER_REGISTRATOR = orderRegistrator;
+    }
 
     /**
      * @dev Calculates fee amounts depending on whether the taker is in the whitelist and whether they have an _ACCESS_TOKEN.
      * @param order The user's order.
+     * @param orderHash The hash of the order.
      * @param taker The taker address.
      * @param takingAmount The amount of the asset being taken.
      * @param extraData The extra data has the following format:
@@ -51,8 +62,8 @@ contract SimpleSettlement is FeeTaker {
      * @return protocolFeeAmount Fee amount paid to the protocol.
      * @return tail Remaining calldata after processing fee-related fields.
      */
-    function _getFeeAmounts(IOrderMixin.Order calldata order, address taker, uint256 takingAmount, uint256 makingAmount, bytes calldata extraData) internal virtual override returns (uint256 integratorFeeAmount, uint256 protocolFeeAmount, bytes calldata tail) {
-        (integratorFeeAmount, protocolFeeAmount, tail) = super._getFeeAmounts(order, taker, takingAmount, makingAmount, extraData);
+    function _getFeeAmounts(IOrderMixin.Order calldata order, bytes32 orderHash, address taker, uint256 takingAmount, uint256 makingAmount, bytes calldata extraData) internal virtual override returns (uint256 integratorFeeAmount, uint256 protocolFeeAmount, bytes calldata tail) {
+        (integratorFeeAmount, protocolFeeAmount, tail) = super._getFeeAmounts(order, orderHash, taker, takingAmount, makingAmount, extraData);
 
         uint256 estimatedTakingAmount = uint256(bytes32(tail));
         if (estimatedTakingAmount < order.takingAmount) {
@@ -81,7 +92,7 @@ contract SimpleSettlement is FeeTaker {
         uint256 remainingMakingAmount,
         bytes calldata extraData
     ) internal view override returns (uint256) {
-        (uint256 rateBump, bytes calldata tail) = _getRateBump(extraData);
+        (uint256 rateBump, bytes calldata tail) = _getRateBump(orderHash, extraData);
         return Math.mulDiv(
             super._getMakingAmount(order, extension, orderHash, taker, takingAmount, remainingMakingAmount, tail),
             _BASE_POINTS,
@@ -101,7 +112,7 @@ contract SimpleSettlement is FeeTaker {
         uint256 remainingMakingAmount,
         bytes calldata extraData
     ) internal view override returns (uint256) {
-        (uint256 rateBump, bytes calldata tail) = _getRateBump(extraData);
+        (uint256 rateBump, bytes calldata tail) = _getRateBump(orderHash, extraData);
         return Math.mulDiv(
             super._getTakingAmount(order, extension, orderHash, taker, makingAmount, remainingMakingAmount, tail),
             _BASE_POINTS + rateBump,
@@ -120,13 +131,17 @@ contract SimpleSettlement is FeeTaker {
      * ```
      * Only 10 lowest bytes of the address are used for comparison.
      * @param taker The taker address to check.
+     * @param orderHash The hash of the order.
      * @return isWhitelisted Whether the taker is whitelisted.
      * @return tail Remaining calldata.
      */
-    function _isWhitelistedPostInteractionImpl(bytes calldata whitelistData, address taker) internal view override returns (bool isWhitelisted, bytes calldata tail) {
+    function _isWhitelistedPostInteractionImpl(bytes calldata whitelistData, address taker, bytes32 orderHash) internal view override returns (bool isWhitelisted, bytes calldata tail) {
         unchecked {
             uint80 maskedTakerAddress = uint80(uint160(taker));
             uint256 allowedTime = uint32(bytes4(whitelistData));
+            if (allowedTime & _ANCHOR_FLAG_MASK != 0) {
+                allowedTime = _anchoredTime(orderHash);
+            }
             uint256 size = uint8(whitelistData[4]);
             bytes calldata whitelist = whitelistData[5:5 + 12 * size];
             tail = whitelistData[5 + 12 * size:];
@@ -151,6 +166,7 @@ contract SimpleSettlement is FeeTaker {
      * @dev Parses auction rate bump data from the `auctionDetails` field.
      * `gasBumpEstimate` and `gasPriceEstimate` are used to estimate the transaction costs
      * which are then offset from the auction rate bump.
+     * @param orderHash The hash of the order.
      * @param auctionDetails AuctionDetails is a tightly packed struct of the following format:
      * ```
      * struct AuctionDetails {
@@ -165,12 +181,15 @@ contract SimpleSettlement is FeeTaker {
      * @return rateBump The rate bump.
      * @return Remaining calldata after parsing auction data.
      */
-    function _getRateBump(bytes calldata auctionDetails) private view returns (uint256, bytes calldata) {
+    function _getRateBump(bytes32 orderHash, bytes calldata auctionDetails) private view returns (uint256, bytes calldata) {
         unchecked {
             uint256 gasBumpEstimate = uint24(bytes3(auctionDetails[0:3]));
             uint256 gasPriceEstimate = uint32(bytes4(auctionDetails[3:7]));
             uint256 gasBump = gasBumpEstimate == 0 || gasPriceEstimate == 0 ? 0 : gasBumpEstimate * block.basefee / gasPriceEstimate / _GAS_PRICE_BASE;
             uint256 auctionStartTime = uint32(bytes4(auctionDetails[7:11]));
+            if (auctionStartTime & _ANCHOR_FLAG_MASK != 0) {
+                auctionStartTime = _anchoredTime(orderHash);
+            }
             uint256 auctionFinishTime = auctionStartTime + uint24(bytes3(auctionDetails[11:14]));
             uint256 initialRateBump = uint24(bytes3(auctionDetails[14:17]));
             (uint256 auctionBump, bytes calldata tail) = _getAuctionBump(auctionStartTime, auctionFinishTime, initialRateBump, auctionDetails[17:]);
@@ -219,5 +238,12 @@ contract SimpleSettlement is FeeTaker {
             }
             return ((auctionFinishTime - block.timestamp) * currentRateBump / (auctionFinishTime - currentPointTime), tail);
         }
+    }
+
+    /// @dev Returns the announcement timestamp, so an anchored order cannot be filled before it is announced.
+    function _anchoredTime(bytes32 orderHash) private view returns (uint256) {
+        uint256 announcedTime = _ORDER_REGISTRATOR.announcedAt(orderHash);
+        if (announcedTime == 0) revert OrderNotAnnounced();
+        return announcedTime;
     }
 }

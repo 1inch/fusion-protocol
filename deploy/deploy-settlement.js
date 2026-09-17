@@ -28,6 +28,7 @@ module.exports = async ({ getNamedAccounts, deployments, config }) => {
         constants.ACCESS_TOKEN_ADDRESS[chainId],
         constants.WETH[chainId],
         constants.SETTLEMENT_OWNER_ADDRESS[chainId],
+        constants.ORDER_REGISTRATOR_ADDRESS[chainId],
     ];
 
     const deploymentName = 'SimpleSettlement';

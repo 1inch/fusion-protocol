@@ -6,6 +6,7 @@ module.exports = {
     CREATE3_DEPLOYERS: constants.create3Deployers || {},
     SETTLEMENT_SALT: constants.settlementSalt || {},
     SETTLEMENT_OWNER_ADDRESS: constants.settlementOwnerAddress || {},
+    ORDER_REGISTRATOR_ADDRESS: constants.orderRegistratorAddress || {},
     ACCESS_TOKEN_ADDRESS: constants.accessTokenAddress || {},
     WETH: constants.weth || {},
     ROUTER_V6_ADDRESS: constants.routerV6Address || {},

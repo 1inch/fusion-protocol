@@ -26,7 +26,8 @@ describe('MeasureGas', function () {
         await weth.deposit({ value: ether('1') });
         await weth.connect(alice).deposit({ value: ether('1') });
 
-        const settlementExtension = await deployContract('Settlement', [lopv4, accessToken, weth, owner]);
+        const orderRegistrator = await deployContract('OrderRegistrator', [lopv4]);
+        const settlementExtension = await deployContract('Settlement', [lopv4, accessToken, weth, owner, orderRegistrator]);
         const SettlementV1 = JSON.parse(fs.readFileSync(path.join(__dirname, '../artifacts-v1/SettlementV1.json'), 'utf8'));
         // const settlement = await deployContract(SettlementV1.abi, [lopv3.address, inch.address]);
         const ContractFactory = await ethers.getContractFactory(SettlementV1.abi, SettlementV1.bytecode);
@@ -44,7 +45,7 @@ describe('MeasureGas', function () {
         await resolver.approve(weth, lopv4);
 
         return {
-            contracts: { dai, weth, accessToken, lopv3, lopv4, settlement, settlementExtension, resolversV1, resolver },
+            contracts: { dai, weth, accessToken, lopv3, lopv4, settlement, settlementExtension, orderRegistrator, resolversV1, resolver },
             accounts: { owner, alice },
             others: { chainId, abiCoder },
         };
@@ -221,10 +222,11 @@ describe('MeasureGas', function () {
 
     describe('Extension check', function () {
         it('post interaction', async function () {
-            const { contracts: { dai, weth, accessToken }, accounts: { owner } } = await loadFixture(initContractsAndApproves);
+            const { contracts: { dai, weth, accessToken, orderRegistrator }, accounts: { owner } } = await loadFixture(initContractsAndApproves);
             const makingAmount = ether('10');
             const takingAmount = ether('1');
-            const settlementExtension = await deployContract('Settlement', [owner, weth, accessToken, weth, owner]);
+            // `owner` stands in for the limit order protocol so it can call `postInteraction` directly
+            const settlementExtension = await deployContract('Settlement', [owner, weth, accessToken, weth, orderRegistrator]);
             const auction = await buildAuctionDetails();
             const extensions = buildSettlementExtensions({
                 feeTaker: await settlementExtension.getAddress(),
@@ -365,6 +367,44 @@ describe('MeasureGas', function () {
             const tx = await resolver.settleOrders(fillOrderToData);
 
             console.log(`1 fill for 1 order via resolver with funds gasUsed: ${(await tx.wait()).gasUsed}`);
+            await expect(tx).to.changeTokenBalances(dai, [resolver, alice], [ether('100'), ether('-100')]);
+            await expect(tx).to.changeTokenBalances(weth, [resolver, alice], [ether('-0.1'), ether('0.1')]);
+        });
+
+        it('extension 1 fill for 1 anchored order via resolver with funds', async function () {
+            const dataFormFixture = await loadFixture(initContractsForSettlement);
+            const auction = await buildAuctionDetails({ anchored: true });
+            const setupData = { ...dataFormFixture, auction };
+            const {
+                contracts: { dai, weth, lopv4, resolver, orderRegistrator },
+                accounts: { alice },
+                others: { chainId },
+            } = setupData;
+
+            const { calldata: fillOrderToData, order } = await buildCalldataForOrder({
+                orderData: {
+                    maker: alice.address,
+                    makerAsset: await dai.getAddress(),
+                    takerAsset: await weth.getAddress(),
+                    makingAmount: ether('100'),
+                    takingAmount: ether('0.1'),
+                    makerTraits: buildMakerTraits(),
+                },
+                orderSigner: alice,
+                setupData,
+                threshold: ether('0.1'),
+                isInnermostOrder: true,
+                returnOrder: true,
+            });
+
+            const signature = await signOrder(order, chainId, await lopv4.getAddress(), alice);
+            await orderRegistrator.registerOrder(order, order.extension, signature);
+
+            await weth.transfer(resolver, ether('0.1'));
+
+            const tx = await resolver.settleOrders(fillOrderToData);
+
+            console.log(`1 fill for 1 anchored order via resolver with funds gasUsed: ${(await tx.wait()).gasUsed}`);
             await expect(tx).to.changeTokenBalances(dai, [resolver, alice], [ether('100'), ether('-100')]);
             await expect(tx).to.changeTokenBalances(weth, [resolver, alice], [ether('-0.1'), ether('0.1')]);
         });

@@ -11,20 +11,20 @@ import { IOrderRegistrator } from "@1inch/limit-order-protocol-contract/contract
 /**
  * @title Simple Settlement contract
  * @notice Contract to execute limit orders settlement, created by Fusion mode.
+ * @dev The top bit of the uint32 auction start time and whitelist allowed time anchors each independently
+ * to `OrderRegistrator.announcedAt(orderHash)`, ignoring the remaining bits. Unannounced orders revert.
  */
 contract SimpleSettlement is FeeTaker {
     using Math for uint256;
-
-    /// @dev Top bit of a uint32 timestamp anchors it to `announcedAt(orderHash)`; the remaining bits are ignored.
-    uint256 private constant _ANCHOR_FLAG_MASK = 1 << 31;
-
-    uint256 private constant _BASE_POINTS = 10_000_000; // 100%
-    uint256 private constant _GAS_PRICE_BASE = 1_000_000; // 1000 means 1 Gwei
 
     error AllowedTimeViolation();
     error InvalidProtocolSurplusFee();
     error InvalidEstimatedTakingAmount();
     error OrderNotAnnounced();
+
+    uint256 private constant _ANCHOR_FLAG_MASK = 1 << 31;
+    uint256 private constant _BASE_POINTS = 10_000_000; // 100%
+    uint256 private constant _GAS_PRICE_BASE = 1_000_000; // 1000 means 1 Gwei
 
     IOrderRegistrator private immutable _ORDER_REGISTRATOR;
 
@@ -125,7 +125,7 @@ contract SimpleSettlement is FeeTaker {
      * @dev Validates whether the taker is whitelisted.
      * @param whitelistData Whitelist data is a tightly packed struct of the following format:
      * ```
-     * 4 bytes - allowed time (top bit is the anchor flag, see `_ANCHOR_FLAG_MASK`)
+     * 4 bytes - allowed time
      * 1 byte - size of the whitelist
      * (bytes12)[N] — taker whitelist
      * ```
@@ -172,7 +172,7 @@ contract SimpleSettlement is FeeTaker {
      * struct AuctionDetails {
      *     bytes3 gasBumpEstimate;
      *     bytes4 gasPriceEstimate;
-     *     bytes4 auctionStartTime; // top bit is the anchor flag, see `_ANCHOR_FLAG_MASK`
+     *     bytes4 auctionStartTime;
      *     bytes3 auctionDuration;
      *     bytes3 initialRateBump;
      *     (bytes3,bytes2)[N] pointsAndTimeDeltas;

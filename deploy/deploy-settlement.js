@@ -23,32 +23,12 @@ module.exports = async ({ getNamedAccounts, deployments, config }) => {
         DEPLOYMENT_METHOD = 'create';
     }
 
-    const orderRegistratorAddress = constants.ORDER_REGISTRATOR_ADDRESS[chainId];
-    if (!ethers.isAddress(orderRegistratorAddress) || orderRegistratorAddress === ethers.ZeroAddress) {
-        throw new Error(`Invalid OrderRegistrator address for chain ${chainId}: ${orderRegistratorAddress}`);
-    }
-
-    const orderRegistratorInterface = new ethers.Interface([
-        'function announcedAt(bytes32 orderHash) external view returns (uint256 timestamp)',
-    ]);
-    try {
-        const result = await ethers.provider.call({
-            to: orderRegistratorAddress,
-            data: orderRegistratorInterface.encodeFunctionData('announcedAt', [ethers.ZeroHash]),
-        });
-        orderRegistratorInterface.decodeFunctionResult('announcedAt', result);
-    } catch (error) {
-        throw new Error(`OrderRegistrator at ${orderRegistratorAddress} does not implement announcedAt(bytes32)`, {
-            cause: error,
-        });
-    }
-
     const constructorArgs = [
         constants.ROUTER_V6_ADDRESS[chainId],
         constants.ACCESS_TOKEN_ADDRESS[chainId],
         constants.WETH[chainId],
         constants.SETTLEMENT_OWNER_ADDRESS[chainId],
-        orderRegistratorAddress,
+        constants.ORDER_REGISTRATOR_ADDRESS[chainId],
     ];
 
     const deploymentName = 'SimpleSettlement';

@@ -10,7 +10,9 @@ import { SimpleSettlement } from "../SimpleSettlement.sol";
 contract GasBumpChecker is SimpleSettlement {
     error InvalidResult(uint256 actual, uint256 expected);
 
-    constructor(IERC20 accessToken, address weth, address owner) SimpleSettlement(address(this), accessToken, weth, owner, IOrderRegistrator(address(0))) {}
+    constructor(IERC20 accessToken, address weth, address owner, IOrderRegistrator orderRegistrator)
+        SimpleSettlement(address(this), accessToken, weth, owner, orderRegistrator)
+    {}
 
     function testGetTakingAmount(
         IOrderMixin.Order calldata order,

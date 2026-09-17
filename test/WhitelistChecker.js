@@ -132,7 +132,7 @@ describe('WhitelistChecker', function () {
                 contracts: { dai, weth, accessToken, resolver, settlement },
                 accounts: { alice },
             } = setupData;
-            setupData.auction.startTime = '0x7fffffff';
+            setupData.auction.startTime = '0x7fffffff'; // largest timestamp without the anchor bit
 
             weth.transfer(resolver, ether('0.1'));
 
@@ -198,7 +198,7 @@ describe('WhitelistChecker', function () {
                 contracts: { dai, weth, resolver, settlement },
                 accounts: { alice },
             } = setupData;
-            setupData.auction.startTime = '0x7fffffff';
+            setupData.auction.startTime = '0x7fffffff'; // largest timestamp without the anchor bit
 
             weth.transfer(resolver, ether('0.1'));
 

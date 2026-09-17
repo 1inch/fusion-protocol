@@ -16,11 +16,11 @@ describe('GasBump', function () {
     });
 
     async function prepare() {
-        const { contracts: { dai, weth, accessToken }, accounts: { owner } } = await initContractsForSettlement();
+        const { contracts: { dai, weth, accessToken, orderRegistrator }, accounts: { owner } } = await initContractsForSettlement();
         const makingAmount = ether('10');
         const takingAmount = ether('1');
         const GasBumpChecker = await ethers.getContractFactory('GasBumpChecker');
-        const checker = await GasBumpChecker.deploy(accessToken, weth, owner);
+        const checker = await GasBumpChecker.deploy(accessToken, weth, owner, orderRegistrator);
         const currentTime = (await time.latest()) - time.duration.minutes(1) + 1;
         const { details: auctionDetails } = await buildAuctionDetails({
             gasBumpEstimate: 10000, // 0.1% of taking amount

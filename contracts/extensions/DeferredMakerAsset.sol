@@ -250,7 +250,7 @@ abstract contract DeferredMakerAsset is IPreInteraction, IPostInteraction, Ownab
     function _validateSettlementData(bytes calldata data, address receiver) private view {
         if (data.length < _CUSTOM_RECEIVER_OFFSET) revert UnsupportedOrder();
         uint256 offset = _CUSTOM_RECEIVER_OFFSET;
-        if (uint8(data[0]) & _CUSTOM_RECEIVER_FLAG != 0) {
+        if ((uint8(data[0]) & _CUSTOM_RECEIVER_FLAG) != 0) {
             if (data.length < offset + 20) revert UnsupportedOrder();
             if (receiver == SETTLEMENT && address(bytes20(data[offset:])) != address(this)) revert UnsupportedOrder();
             offset += 20;

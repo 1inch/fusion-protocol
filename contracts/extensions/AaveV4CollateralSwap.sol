@@ -116,7 +116,7 @@ contract AaveV4CollateralSwap is IAaveV4CollateralSwap, DeferredMakerAsset {
         GIVER_POSITION_MANAGER.supplyOnBehalfOf(address(spoke), params.buyReserveId, received, maker);
 
         // A resolver can make the try/catch'd collateral signature fail by forwarding too little gas.
-        if (params.flags & _REQUIRE_COLLATERAL_FLAG != 0) {
+        if ((params.flags & _REQUIRE_COLLATERAL_FLAG) != 0) {
             (bool usingAsCollateral, ) = spoke.getUserReserveStatus(params.buyReserveId, maker);
             if (!usingAsCollateral) revert CollateralNotEnabled();
         }
@@ -136,7 +136,7 @@ contract AaveV4CollateralSwap is IAaveV4CollateralSwap, DeferredMakerAsset {
             sellAsset.safeTransfer(maker, withdrawn - makingAmount);
         }
 
-        if (finalFill && params.flags & _RENOUNCE_ALLOWANCE_FLAG != 0) {
+        if (finalFill && (params.flags & _RENOUNCE_ALLOWANCE_FLAG) != 0) {
             TAKER_POSITION_MANAGER.renounceWithdrawAllowance(address(spoke), params.sellReserveId, maker);
         }
 

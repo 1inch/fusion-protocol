@@ -46,7 +46,7 @@ LOW_OPTIMIZER_COMPILER_SETTINGS.settings.optimizer.runs = 200;
 const ST1INCH_COMPILER_SETTINGS = JSON.parse(JSON.stringify(DEFAULT_COMPILER_SETTINGS));
 ST1INCH_COMPILER_SETTINGS.version = '0.8.23';
 
-// The Aave V4 proof of concept relies on transient storage
+// Contracts built on DeferredMakerAsset rely on transient storage
 const CANCUN_COMPILER_SETTINGS = JSON.parse(JSON.stringify(DEFAULT_COMPILER_SETTINGS));
 CANCUN_COMPILER_SETTINGS.settings.evmVersion = 'cancun';
 
@@ -60,7 +60,8 @@ module.exports = {
         overrides: {
             '@1inch/limit-order-protocol-contract/contracts/LimitOrderProtocol.sol': LOW_OPTIMIZER_COMPILER_SETTINGS,
             'contracts/hardhat-dependency-compiler/@1inch/limit-order-protocol-contract/contracts/LimitOrderProtocol.sol': LOW_OPTIMIZER_COMPILER_SETTINGS,
-            'contracts/poc/AaveV4CollateralSwapAdapter.sol': CANCUN_COMPILER_SETTINGS,
+            'contracts/extensions/DeferredMakerAsset.sol': CANCUN_COMPILER_SETTINGS,
+            'contracts/extensions/AaveV4CollateralSwap.sol': CANCUN_COMPILER_SETTINGS,
             '@openzeppelin/contracts/utils/TransientSlot.sol': CANCUN_COMPILER_SETTINGS,
         },
     },

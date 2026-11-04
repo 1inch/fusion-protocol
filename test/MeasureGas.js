@@ -6,6 +6,7 @@ const { loadFixture } = require('@nomicfoundation/hardhat-network-helpers');
 const { constants, time, expect, ether, trim0x, deployContract } = require('@1inch/solidity-utils');
 const { deploySwapTokens, getChainId, initContractsForSettlement } = require('./helpers/fixtures');
 const { buildAuctionDetails, buildCalldataForOrder, buildSettlementExtensions } = require('./helpers/fusionUtils');
+const { buildTwapOrder } = require('./helpers/twapUtils');
 const { buildOrder: buildOrderV1, buildSalt: buildSaltV1, signOrder: signOrderV1 } = require('./helpers/orderUtilsV1');
 const { buildOrder, signOrder, buildTakerTraits, buildMakerTraits } = require('@1inch/limit-order-protocol-contract/test/helpers/orderUtils');
 
@@ -367,6 +368,83 @@ describe('MeasureGas', function () {
             console.log(`1 fill for 1 order via resolver with funds gasUsed: ${(await tx.wait()).gasUsed}`);
             await expect(tx).to.changeTokenBalances(dai, [resolver, alice], [ether('100'), ether('-100')]);
             await expect(tx).to.changeTokenBalances(weth, [resolver, alice], [ether('-0.1'), ether('0.1')]);
+        });
+
+        it('extension 1 partial fill for 1 order via resolver with funds', async function () {
+            const dataFormFixture = await loadFixture(initContractsForSettlement);
+            const auction = await buildAuctionDetails();
+            const setupData = { ...dataFormFixture, auction };
+            const {
+                contracts: { dai, weth, resolver },
+                accounts: { alice },
+            } = setupData;
+
+            const fillOrderToData = await buildCalldataForOrder({
+                orderData: {
+                    maker: alice.address,
+                    makerAsset: await dai.getAddress(),
+                    takerAsset: await weth.getAddress(),
+                    makingAmount: ether('100'),
+                    takingAmount: ether('0.1'),
+                    makerTraits: buildMakerTraits(),
+                },
+                orderSigner: alice,
+                setupData,
+                threshold: ether('0.025'),
+                fillingAmount: ether('25'),
+                isInnermostOrder: true,
+            });
+
+            await weth.transfer(resolver, ether('0.025'));
+
+            const tx = await resolver.settleOrders(fillOrderToData);
+
+            console.log(`1 partial fill for 1 order via resolver with funds gasUsed: ${(await tx.wait()).gasUsed}`);
+            await expect(tx).to.changeTokenBalances(dai, [resolver, alice], [ether('25'), ether('-25')]);
+            await expect(tx).to.changeTokenBalances(weth, [resolver, alice], [ether('-0.025'), ether('0.025')]);
+        });
+
+        it('extension 1 TWAP part fill via resolver with funds', async function () {
+            const {
+                contracts: { dai, weth, lopv4, settlement, resolver },
+                accounts: { alice },
+                others: { chainId },
+            } = await loadFixture(initContractsForSettlement);
+            const twap = await deployContract('FusionTwap');
+            const schedule = { startTime: await time.latest(), interval: 600, parts: 4 };
+            const auction = await buildAuctionDetails({ startTime: schedule.startTime, duration: 0 });
+
+            const order = buildTwapOrder({
+                twap: await twap.getAddress(),
+                settlement: await settlement.getAddress(),
+                orderData: {
+                    maker: alice.address,
+                    makerAsset: await dai.getAddress(),
+                    takerAsset: await weth.getAddress(),
+                    makingAmount: ether('100'),
+                    takingAmount: ether('0.1'),
+                },
+                schedule,
+                auctionDetails: auction.details,
+            });
+            const { r, yParityAndS: vs } = ethers.Signature.from(await signOrder(order, chainId, await lopv4.getAddress(), alice));
+            const takerTraits = buildTakerTraits({
+                makingAmount: true,
+                threshold: ether('0.025'),
+                extension: order.extension,
+                interaction: await resolver.getAddress() + '01',
+                target: await resolver.getAddress(),
+            });
+
+            await weth.transfer(resolver, ether('0.025'));
+
+            const tx = await resolver.settleOrders(
+                lopv4.interface.encodeFunctionData('fillOrderArgs', [order, r, vs, ether('25'), takerTraits.traits, takerTraits.args]),
+            );
+
+            console.log(`1 TWAP part fill via resolver with funds gasUsed: ${(await tx.wait()).gasUsed}`);
+            await expect(tx).to.changeTokenBalances(dai, [resolver, alice], [ether('25'), ether('-25')]);
+            await expect(tx).to.changeTokenBalances(weth, [resolver, alice], [ether('-0.025'), ether('0.025')]);
         });
 
         it('extension 1 fill for 1 order via resolver without funds', async function () {

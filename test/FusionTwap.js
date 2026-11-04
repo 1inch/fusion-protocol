@@ -1,4 +1,5 @@
-const { ethers } = require('hardhat');
+const hre = require('hardhat');
+const { ethers, network } = hre;
 const { loadFixture } = require('@nomicfoundation/hardhat-network-helpers');
 const { constants, time, expect, ether, trim0x, deployContract } = require('@1inch/solidity-utils');
 const { buildOrder, buildMakerTraits, buildTakerTraits, signOrder } = require('@1inch/limit-order-protocol-contract/test/helpers/orderUtils');
@@ -42,7 +43,7 @@ describe('FusionTwap', function () {
     }
 
     function fillerFor({ contracts: { lopv4, resolver } }, order, signature, maker) {
-        async function fillBy(isMakingAmount, amount, threshold, timestamp) {
+        async function fillBy(isMakingAmount, amount, threshold, timestamp, overrides = {}) {
             const takerTraits = buildTakerTraits({
                 makingAmount: isMakingAmount,
                 threshold,
@@ -55,26 +56,36 @@ describe('FusionTwap', function () {
                 ? lopv4.interface.encodeFunctionData('fillContractOrderArgs', [order, signature, amount, takerTraits.traits, takerTraits.args])
                 : lopv4.interface.encodeFunctionData('fillOrderArgs', [order, r, vs, amount, takerTraits.traits, takerTraits.args]);
             await time.setNextBlockTimestamp(timestamp);
-            return resolver.settleOrders(calldata);
+            return resolver.settleOrders(calldata, overrides);
         }
 
         return {
-            fill: (makingAmount, maxTakingAmount, timestamp) => fillBy(true, makingAmount, maxTakingAmount, timestamp),
+            fill: (makingAmount, maxTakingAmount, timestamp, overrides) => fillBy(true, makingAmount, maxTakingAmount, timestamp, overrides),
             fillByTakingAmount: (takingAmount, minMakingAmount, timestamp) => fillBy(false, takingAmount, minMakingAmount, timestamp),
         };
     }
 
-    async function prepareTwap({ data, maker, twap, anchored = false, ...orderOptions } = {}) {
+    async function prepareTwap({
+        data,
+        maker,
+        twap,
+        settlement,
+        anchored = false,
+        parts = PARTS,
+        interval = INTERVAL,
+        auction = {},
+        ...orderOptions
+    } = {}) {
         data = data || await loadFixture(initContracts);
         const { contracts, accounts: { alice }, others: { chainId } } = data;
 
         const startTime = await time.latest() + 100;
-        const schedule = { startTime, interval: INTERVAL, parts: PARTS, anchored };
-        const auctionParams = { duration: AUCTION_DURATION, initialRateBump: INITIAL_RATE_BUMP };
+        const schedule = { startTime, interval, parts, anchored };
+        const auctionParams = { duration: AUCTION_DURATION, initialRateBump: INITIAL_RATE_BUMP, ...auction };
         const { details: auctionDetails } = await buildAuctionDetails({ startTime, ...auctionParams });
         const order = buildTwapOrder({
             twap: await (twap || contracts.twap).getAddress(),
-            settlement: await contracts.settlement.getAddress(),
+            settlement: await (settlement || contracts.settlement).getAddress(),
             orderData: {
                 maker: maker ? await maker.getAddress() : alice.address,
                 makerAsset: await contracts.dai.getAddress(),
@@ -343,6 +354,91 @@ describe('FusionTwap', function () {
                 const { contracts: { twap }, order } = await prepareTwap();
                 await expect(twap.preInteraction(order, order.extension, constants.ZERO_BYTES32, constants.ZERO_ADDRESS, 1, 1, MAKING_AMOUNT, schedule))
                     .to.be.revertedWithCustomError(twap, 'TwapInvalidSchedule');
+            });
+        }
+    });
+
+    describe('parity with the settlement', function () {
+        before(function () {
+            if (hre.__SOLIDITY_COVERAGE_RUNNING) { this.skip(); }
+        });
+
+        after(async function () {
+            await network.provider.send('hardhat_setNextBlockBaseFeePerGas', ['0x1']);
+        });
+
+        it('applies the settlement gas bump on a part auction', async function () {
+            const { contracts: { weth, resolver }, accounts: { alice }, schedule, fill } = await prepareTwap({
+                auction: { gasBumpEstimate: 10000, gasPriceEstimate: 1000 },
+            });
+            const baseFee = 15000000000n;
+            const takingAmount = PART_TAKING_AMOUNT * 10850000n / RATE_BUMP_BASE;
+
+            await network.provider.send('hardhat_setNextBlockBaseFeePerGas', ['0x' + baseFee.toString(16)]);
+            const tx = await fill(PART_MAKING_AMOUNT, takingAmount, schedule.startTime + INTERVAL, { maxFeePerGas: baseFee * 2n, maxPriorityFeePerGas: 0n });
+            await expect(tx).to.changeTokenBalances(weth, [alice, resolver], [takingAmount, -takingAmount]);
+        });
+
+        it('keeps the mainnet priority fee cap', async function () {
+            const data = await loadFixture(initContracts);
+            const { contracts: { lopv4, accessToken, weth, dai, resolver }, accounts: { owner, alice } } = data;
+            const mainnetSettlement = await deployContract('Settlement', [lopv4, accessToken, weth, owner]);
+            const { schedule, fill } = await prepareTwap({ data, settlement: mainnetSettlement });
+            const baseFee = '0x1dcd65000';
+
+            await network.provider.send('hardhat_setNextBlockBaseFeePerGas', [baseFee]);
+            await expect(fill(PART_MAKING_AMOUNT, ether('1'), schedule.startTime, { maxFeePerGas: 20000000000n, maxPriorityFeePerGas: 6000000000n }))
+                .to.be.revertedWithCustomError(mainnetSettlement, 'InvalidPriorityFee');
+
+            await network.provider.send('hardhat_setNextBlockBaseFeePerGas', [baseFee]);
+            const tx = await fill(PART_MAKING_AMOUNT, ether('1'), schedule.startTime + 1, { maxFeePerGas: 20000000000n, maxPriorityFeePerGas: 4000000000n });
+            await expect(tx).to.changeTokenBalances(dai, [alice, resolver], [-PART_MAKING_AMOUNT, PART_MAKING_AMOUNT]);
+        });
+    });
+
+    describe('random fill sequences', function () {
+        function mulberry32(seed) {
+            return function () {
+                seed = (seed + 0x6D2B79F5) | 0;
+                let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+                t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+                return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+            };
+        }
+
+        const randomAmount = (random, max) => BigInt(Math.floor(random() * 1e6)) * max / 1000000n;
+
+        for (const seed of [1, 2, 3]) {
+            it(`never fills beyond the schedule and always prices on the current part's auction (seed ${seed})`, async function () {
+                const random = mulberry32(seed);
+                const parts = 2 + Math.floor(random() * 7);
+                const interval = 60 + Math.floor(random() * 840);
+                const auction = { duration: 1 + Math.floor(random() * interval), initialRateBump: BigInt(Math.floor(random() * 2000000)) };
+                const { contracts: { twap, weth, resolver }, accounts: { alice }, schedule, fill } = await prepareTwap({ parts, interval, auction });
+                const end = schedule.startTime + parts * interval;
+
+                let filled = 0n;
+                for (let now = schedule.startTime; now < end && filled < MAKING_AMOUNT; now += 1 + Math.floor(random() * interval * 0.6)) {
+                    const part = Math.floor((now - schedule.startTime) / interval);
+                    const unlocked = MAKING_AMOUNT * BigInt(part + 1) / BigInt(parts);
+                    const available = unlocked - filled;
+
+                    if (unlocked < MAKING_AMOUNT && (available === 0n || random() < 0.3)) {
+                        const amount = available + 1n + randomAmount(random, MAKING_AMOUNT - unlocked - 1n);
+                        await expect(fill(amount, ether('1'), now))
+                            .to.be.revertedWithCustomError(twap, 'TwapAmountNotUnlocked').withArgs(filled + amount, unlocked);
+                    } else if (available > 0n) {
+                        const amount = 1n + randomAmount(random, available - 1n);
+                        const takingAmount = expectedTakingAmount(amount, now - schedule.startTime - part * interval, auction);
+                        const tx = await fill(amount, takingAmount, now);
+                        await expect(tx).to.changeTokenBalances(weth, [alice, resolver], [takingAmount, -takingAmount]);
+                        filled += amount;
+                    }
+                }
+
+                if (filled < MAKING_AMOUNT) {
+                    await expect(fill(1n, ether('1'), end)).to.be.revertedWithCustomError(twap, 'TwapEnded');
+                }
             });
         }
     });

@@ -66,10 +66,16 @@ interface IAaveV4CollateralSwap {
         address recipient
     );
 
+    /// @notice Thrown when the order's taker asset is not the underlying of the buy reserve.
     error TakerAssetMismatch();
+    /// @notice Thrown when the sell and buy reserves are the same.
     error SameReserve();
+    /// @notice Thrown when a permit in the pre-interaction data grants anything other than the order needs.
     error InvalidPermit();
+    /// @notice Thrown when flag bit 1 is set and the buy reserve is not enabled as collateral for the maker.
     error CollateralNotEnabled();
+    /// @notice Thrown when the Spoke withdrew less than the making amount of the fill.
     error InsufficientWithdrawal(uint256 withdrawn, uint256 expected);
+    /// @notice Thrown when the maker's health factor after the fill is below the order's `minHealthFactor`.
     error HealthFactorTooLow(uint256 healthFactor, uint256 minHealthFactor);
 }

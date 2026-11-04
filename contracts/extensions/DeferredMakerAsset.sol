@@ -32,11 +32,18 @@ abstract contract DeferredMakerAsset is IPreInteraction, IPostInteraction, Ownab
     using SlotDerivation for bytes32;
     using TransientSlot for *;
 
+    /// @notice Thrown when `preInteraction` or `transferFrom` is called by anyone but the Limit Order Protocol.
     error OnlyLimitOrderProtocol();
+    /// @notice Thrown when `postInteraction` is called by anyone but the Settlement or the Limit Order Protocol.
     error OnlyFillCallers();
+    /// @notice Thrown when the order is not built for this contract, for example when its post-interaction or its taker asset does not reach it.
     error UnsupportedOrder();
+    /// @notice Thrown when a maker transfer does not match the fill opened by `preInteraction`, targets this contract,
+    /// or repeats an order inside its own fill.
     error UnexpectedMakerTransfer();
+    /// @notice Thrown when `postInteraction` runs for an order without a recorded maker transfer.
     error MakerTransferNotRecorded();
+    /// @notice Thrown when no taker asset reached this contract during the fill.
     error NothingReceived();
 
     /// @dev Fill opened by `preInteraction` and consumed by the following `transferFrom`: order hash, maker, making amount, taker asset balance.

@@ -3,8 +3,13 @@ const { constants, trim0x } = require('@1inch/solidity-utils');
 const { buildOrder, buildMakerTraits } = require('@1inch/limit-order-protocol-contract/test/helpers/orderUtils');
 const { buildSettlementExtensions } = require('./fusionUtils');
 
-function buildTwapSchedule({ startTime, interval, parts }) {
-    return ethers.solidityPacked(['uint32', 'uint24', 'uint16'], [startTime, interval, parts]);
+const ANCHORED_FLAG = 1n << 31n;
+
+function buildTwapSchedule({ startTime, interval, parts, anchored = false }) {
+    return ethers.solidityPacked(
+        ['uint32', 'uint24', 'uint16'],
+        [anchored ? BigInt(startTime) | ANCHORED_FLAG : startTime, interval, parts],
+    );
 }
 
 /**
@@ -12,6 +17,8 @@ function buildTwapSchedule({ startTime, interval, parts }) {
  * `auctionDetails` is the settlement's regular auction; its start time is replaced by each part's start on fill.
  * The resolver whitelist opens at the schedule start and has no exclusivity windows.
  * `scheduleTarget` is the pre-interaction that enforces the schedule: `twap` itself for a valid order.
+ * An anchored schedule ends later when the order is announced late, so it gets no protocol expiry by default;
+ * production orders should still set one as the latest acceptable end.
  */
 function buildTwapOrder({
     twap,
@@ -26,7 +33,7 @@ function buildTwapOrder({
     resolverFee = 0,
     protocolSurplusFee = 0,
     whitelistResolvers = [], // bytes10[]
-    makerTraits = buildMakerTraits({ expiry: schedule.startTime + schedule.interval * schedule.parts }),
+    makerTraits = buildMakerTraits({ expiry: schedule.anchored ? 0 : schedule.startTime + schedule.interval * schedule.parts }),
     scheduleTarget = twap,
 }) {
     let whitelist = ethers.solidityPacked(['uint8'], [whitelistResolvers.length]);

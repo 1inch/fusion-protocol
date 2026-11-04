@@ -10,6 +10,7 @@ const PARTS = 4;
 const INTERVAL = 600;
 const AUCTION_DURATION = 300;
 const INITIAL_RATE_BUMP = 1000000n;
+const RATE_BUMP_BASE = 10000000n;
 const MAKING_AMOUNT = ether('100');
 const TAKING_AMOUNT = ether('0.1');
 const PART_MAKING_AMOUNT = MAKING_AMOUNT / BigInt(PARTS);
@@ -18,13 +19,26 @@ const PART_TAKING_AMOUNT = TAKING_AMOUNT / BigInt(PARTS);
 // Each part's auction starts 10% above the order's limit price and decays linearly to it over AUCTION_DURATION.
 const takingAmountAt = (parts, ratePercent) => PART_TAKING_AMOUNT * BigInt(parts) * BigInt(ratePercent) / 100n;
 
+const ceilDiv = (a, b) => (a + b - 1n) / b;
+
+function expectedTakingAmount(makingAmount, elapsed, { duration, initialRateBump }) {
+    let rateBump = 0n;
+    if (elapsed <= 0) {
+        rateBump = BigInt(initialRateBump);
+    } else if (elapsed < duration) {
+        rateBump = BigInt(duration - elapsed) * BigInt(initialRateBump) / BigInt(duration);
+    }
+    return ceilDiv(ceilDiv(TAKING_AMOUNT * makingAmount, MAKING_AMOUNT) * (RATE_BUMP_BASE + rateBump), RATE_BUMP_BASE);
+}
+
 describe('FusionTwap', function () {
     async function initContracts() {
         const data = await initContractsForSettlement();
-        const { contracts: { weth, resolver } } = data;
-        const twap = await deployContract('FusionTwap');
+        const { contracts: { lopv4, weth, resolver } } = data;
+        const registrator = await deployContract('OrderRegistratorMock', [lopv4]);
+        const twap = await deployContract('FusionTwap', [registrator]);
         await weth.transfer(resolver, ether('0.5'));
-        return { ...data, contracts: { ...data.contracts, twap } };
+        return { ...data, contracts: { ...data.contracts, registrator, twap } };
     }
 
     function fillerFor({ contracts: { lopv4, resolver } }, order, signature, maker) {
@@ -50,15 +64,16 @@ describe('FusionTwap', function () {
         };
     }
 
-    async function prepareTwap({ data, maker, ...orderOptions } = {}) {
+    async function prepareTwap({ data, maker, twap, anchored = false, ...orderOptions } = {}) {
         data = data || await loadFixture(initContracts);
         const { contracts, accounts: { alice }, others: { chainId } } = data;
 
         const startTime = await time.latest() + 100;
-        const schedule = { startTime, interval: INTERVAL, parts: PARTS };
-        const { details: auctionDetails } = await buildAuctionDetails({ startTime, duration: AUCTION_DURATION, initialRateBump: INITIAL_RATE_BUMP });
+        const schedule = { startTime, interval: INTERVAL, parts: PARTS, anchored };
+        const auctionParams = { duration: AUCTION_DURATION, initialRateBump: INITIAL_RATE_BUMP };
+        const { details: auctionDetails } = await buildAuctionDetails({ startTime, ...auctionParams });
         const order = buildTwapOrder({
-            twap: await contracts.twap.getAddress(),
+            twap: await (twap || contracts.twap).getAddress(),
             settlement: await contracts.settlement.getAddress(),
             orderData: {
                 maker: maker ? await maker.getAddress() : alice.address,
@@ -73,7 +88,7 @@ describe('FusionTwap', function () {
         });
         const signature = await signOrder(order, chainId, await contracts.lopv4.getAddress(), alice);
 
-        return { ...data, order, schedule, ...fillerFor(data, order, signature, maker) };
+        return { ...data, order, schedule, auction: auctionParams, ...fillerFor(data, order, signature, maker) };
     }
 
     it('cannot be filled before the first part starts', async function () {
@@ -201,7 +216,7 @@ describe('FusionTwap', function () {
 
     it('refuses to price an order whose schedule is enforced by another contract', async function () {
         const data = await loadFixture(initContracts);
-        const otherTwap = await deployContract('FusionTwap');
+        const otherTwap = await deployContract('FusionTwap', [constants.ZERO_ADDRESS]);
         const { contracts: { twap }, schedule, fill } = await prepareTwap({ data, scheduleTarget: await otherTwap.getAddress() });
         await expect(fill(PART_MAKING_AMOUNT, ether('1'), schedule.startTime)).to.be.revertedWithCustomError(twap, 'TwapScheduleNotFound');
     });
@@ -271,6 +286,47 @@ describe('FusionTwap', function () {
             await expect(tx).to.changeTokenBalances(dai, [maker, resolver], [-PART_MAKING_AMOUNT, PART_MAKING_AMOUNT]);
             await expect(tx).to.changeTokenBalances(weth, [maker, resolver], [takingAmount, -takingAmount]);
         }
+    });
+
+    describe('schedule anchored to the announcement', function () {
+        it('cannot be filled before the order is announced', async function () {
+            const { contracts: { twap }, schedule, fill } = await prepareTwap({ anchored: true });
+            await expect(fill(PART_MAKING_AMOUNT, ether('1'), schedule.startTime)).to.be.revertedWithCustomError(twap, 'TwapNotAnnounced');
+        });
+
+        it('starts a late order at its announcement, with one part unlocked on a fresh auction', async function () {
+            const { contracts: { dai, weth, resolver, registrator, twap }, accounts: { alice }, auction, order, schedule, fill } = await prepareTwap({ anchored: true });
+            const announcedAt = schedule.startTime + PARTS * INTERVAL + 300;
+            await time.setNextBlockTimestamp(announcedAt);
+            await registrator.registerOrder(order);
+
+            const takingAmount = expectedTakingAmount(PART_MAKING_AMOUNT, 1, auction);
+            const tx = await fill(PART_MAKING_AMOUNT, takingAmount, announcedAt + 1);
+            await expect(tx).to.changeTokenBalances(dai, [alice, resolver], [-PART_MAKING_AMOUNT, PART_MAKING_AMOUNT]);
+            await expect(tx).to.changeTokenBalances(weth, [alice, resolver], [takingAmount, -takingAmount]);
+
+            await expect(fill(PART_MAKING_AMOUNT, ether('1'), announcedAt + 2))
+                .to.be.revertedWithCustomError(twap, 'TwapAmountNotUnlocked').withArgs(PART_MAKING_AMOUNT * 2n, PART_MAKING_AMOUNT);
+            await fill(PART_MAKING_AMOUNT * 2n, ether('1'), announcedAt + PARTS * INTERVAL - 1);
+            await expect(fill(1n, ether('1'), announcedAt + PARTS * INTERVAL)).to.be.revertedWithCustomError(twap, 'TwapEnded');
+        });
+
+        it('keeps a later signed start when the order is announced early', async function () {
+            const { contracts: { weth, resolver, registrator, twap }, accounts: { alice }, order, schedule, fill } = await prepareTwap({ anchored: true });
+            await registrator.registerOrder(order);
+
+            await expect(fill(PART_MAKING_AMOUNT, ether('1'), schedule.startTime - 1)).to.be.revertedWithCustomError(twap, 'TwapNotStarted');
+            const takingAmount = takingAmountAt(1, 110);
+            const tx = await fill(PART_MAKING_AMOUNT, takingAmount, schedule.startTime);
+            await expect(tx).to.changeTokenBalances(weth, [alice, resolver], [takingAmount, -takingAmount]);
+        });
+
+        it('cannot be anchored where no registrator is configured', async function () {
+            const data = await loadFixture(initContracts);
+            const twap = await deployContract('FusionTwap', [constants.ZERO_ADDRESS]);
+            const { schedule, fill } = await prepareTwap({ data, twap, anchored: true });
+            await expect(fill(PART_MAKING_AMOUNT, ether('1'), schedule.startTime)).to.be.revertedWithCustomError(twap, 'TwapNotAnnounced');
+        });
     });
 
     describe('schedule validation', function () {

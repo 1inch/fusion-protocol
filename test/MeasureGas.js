@@ -410,7 +410,7 @@ describe('MeasureGas', function () {
                 accounts: { alice },
                 others: { chainId },
             } = await loadFixture(initContractsForSettlement);
-            const twap = await deployContract('FusionTwap');
+            const twap = await deployContract('FusionTwap', [constants.ZERO_ADDRESS]);
             const schedule = { startTime: await time.latest(), interval: 600, parts: 4 };
             const auction = await buildAuctionDetails({ startTime: schedule.startTime, duration: 0 });
 

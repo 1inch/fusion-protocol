@@ -9,6 +9,8 @@ import { IPreInteraction } from "@1inch/limit-order-protocol-contract/contracts/
 import { ExtensionLib } from "@1inch/limit-order-protocol-contract/contracts/libraries/ExtensionLib.sol";
 import { MakerTraits, MakerTraitsLib } from "@1inch/limit-order-protocol-contract/contracts/libraries/MakerTraitsLib.sol";
 
+import { IOrderRegistrator } from "../interfaces/IOrderRegistrator.sol";
+
 /**
  * @title FusionTwap
  * @notice Executes one signed Fusion order as a TWAP: the order unlocks in equal parts, one per interval, every
@@ -29,11 +31,15 @@ contract FusionTwap is IAmountGetter, IPreInteraction {
     using MakerTraitsLib for MakerTraits;
 
     uint256 private constant _SCHEDULE_LENGTH = 9;
+    uint256 private constant _ANCHORED_FLAG = 1 << 31;
     /// @dev Offset of the 4-byte auction start time inside the settlement's `AuctionDetails`.
     uint256 private constant _AUCTION_START_TIME_OFFSET = 7;
 
+    IOrderRegistrator private immutable _ORDER_REGISTRATOR;
+
     error TwapNotStarted();
     error TwapEnded();
+    error TwapNotAnnounced();
     error TwapScheduleNotFound();
     error TwapRequiresMultipleFills();
     error TwapInvalidSchedule();
@@ -41,12 +47,21 @@ contract FusionTwap is IAmountGetter, IPreInteraction {
     error TwapAmountNotUnlocked(uint256 filledAmount, uint256 unlockedAmount);
 
     /**
+     * @param orderRegistrator The registrator whose announcements anchored schedules start from,
+     * or the zero address where none is deployed.
+     */
+    constructor(IOrderRegistrator orderRegistrator) {
+        _ORDER_REGISTRATOR = orderRegistrator;
+    }
+
+    /**
      * @notice See {IPreInteraction-preInteraction}.
      * @dev Reverts unless both amount getters route to this contract and the fill keeps the order within its
      * unlocked parts. It moves no funds and writes no state, so it is safe for anyone to call.
      * `extraData` is the schedule:
      * ```
-     * 4 bytes - start time of the first part
+     * 4 bytes - start time of the first part; with the top bit set, the start is the later of the remaining
+     *           bits and the order's announcement at the order registrator
      * 3 bytes - interval between parts, in seconds
      * 2 bytes - number of parts
      * ```
@@ -54,7 +69,7 @@ contract FusionTwap is IAmountGetter, IPreInteraction {
     function preInteraction(
         IOrderMixin.Order calldata order,
         bytes calldata extension,
-        bytes32 /* orderHash */,
+        bytes32 orderHash,
         address /* taker */,
         uint256 makingAmount,
         uint256 /* takingAmount */,
@@ -64,7 +79,7 @@ contract FusionTwap is IAmountGetter, IPreInteraction {
         if (!_isRoutedHere(extension.makingAmountData()) || !_isRoutedHere(extension.takingAmountData())) {
             revert TwapScheduleNotFound();
         }
-        (uint256 startTime, uint256 interval, uint256 parts) = _parseSchedule(extraData);
+        (uint256 startTime, uint256 interval, uint256 parts) = _parseSchedule(orderHash, extraData);
         uint256 unlockedAmount = Math.mulDiv(order.makingAmount, _currentPart(startTime, interval, parts) + 1, parts);
         uint256 filledAmount = order.makingAmount - remainingMakingAmount + makingAmount;
         if (filledAmount > unlockedAmount) revert TwapAmountNotUnlocked(filledAmount, unlockedAmount);
@@ -84,7 +99,7 @@ contract FusionTwap is IAmountGetter, IPreInteraction {
         uint256 remainingMakingAmount,
         bytes calldata extraData
     ) external view returns (uint256) {
-        (IAmountGetter getter, bytes memory getterData) = _restartAuction(order, extension, extraData);
+        (IAmountGetter getter, bytes memory getterData) = _restartAuction(order, extension, orderHash, extraData);
         return getter.getMakingAmount(order, extension, orderHash, taker, takingAmount, remainingMakingAmount, getterData);
     }
 
@@ -101,7 +116,7 @@ contract FusionTwap is IAmountGetter, IPreInteraction {
         uint256 remainingMakingAmount,
         bytes calldata extraData
     ) external view returns (uint256) {
-        (IAmountGetter getter, bytes memory getterData) = _restartAuction(order, extension, extraData);
+        (IAmountGetter getter, bytes memory getterData) = _restartAuction(order, extension, orderHash, extraData);
         return getter.getTakingAmount(order, extension, orderHash, taker, makingAmount, remainingMakingAmount, getterData);
     }
 
@@ -113,12 +128,13 @@ contract FusionTwap is IAmountGetter, IPreInteraction {
     function _restartAuction(
         IOrderMixin.Order calldata order,
         bytes calldata extension,
+        bytes32 orderHash,
         bytes calldata extraData
     ) private view returns (IAmountGetter getter, bytes memory getterData) {
         bytes calldata preInteractionData = extension.preInteractionTargetAndData();
         if (!order.makerTraits.needPreInteractionCall() || !_isRoutedHere(preInteractionData)) revert TwapScheduleNotFound();
         if (order.makerTraits.useBitInvalidator()) revert TwapRequiresMultipleFills();
-        (uint256 startTime, uint256 interval, uint256 parts) = _parseSchedule(preInteractionData[20:]);
+        (uint256 startTime, uint256 interval, uint256 parts) = _parseSchedule(orderHash, preInteractionData[20:]);
 
         if (extraData.length < 20 + _AUCTION_START_TIME_OFFSET + 4) revert TwapInvalidAuctionDetails();
         getter = IAmountGetter(address(bytes20(extraData)));
@@ -134,7 +150,7 @@ contract FusionTwap is IAmountGetter, IPreInteraction {
         return targetAndData.length >= 20 && address(bytes20(targetAndData)) == address(this);
     }
 
-    function _parseSchedule(bytes calldata schedule) private pure returns (
+    function _parseSchedule(bytes32 orderHash, bytes calldata schedule) private view returns (
         uint256 startTime,
         uint256 interval,
         uint256 parts
@@ -143,9 +159,17 @@ contract FusionTwap is IAmountGetter, IPreInteraction {
         startTime = uint32(bytes4(schedule[0:4]));
         interval = uint24(bytes3(schedule[4:7]));
         parts = uint16(bytes2(schedule[7:9]));
+        if (startTime & _ANCHORED_FLAG != 0) {
+            startTime = Math.max(startTime ^ _ANCHORED_FLAG, _announcedAt(orderHash));
+        }
         if (startTime == 0 || interval == 0 || parts == 0 || startTime + (parts - 1) * interval > type(uint32).max) {
             revert TwapInvalidSchedule();
         }
+    }
+
+    function _announcedAt(bytes32 orderHash) private view returns (uint256 announcedAt) {
+        if (address(_ORDER_REGISTRATOR) != address(0)) announcedAt = _ORDER_REGISTRATOR.announcedAt(orderHash);
+        if (announcedAt == 0) revert TwapNotAnnounced();
     }
 
     function _currentPart(uint256 startTime, uint256 interval, uint256 parts) private view returns (uint256 part) {

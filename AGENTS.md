@@ -29,8 +29,3 @@ commands live in `README.md` and `package.json` (`yarn hardhat compile`, `yarn t
   (no RPC URLs configured in the environment), not errors.
 - Deployments go through the `Makefile` and require `OPS_*` variables in `.env` plus real
   network RPC access; none of that is needed for local development, compiling, or testing.
-
-### Known repo state
-- `yarn lint` currently reports pre-existing `space-before-function-paren` eslint errors in
-  `scripts/mint-kyc.js` and `scripts/transfer-ownership.js`. These are existing code issues,
-  not an environment problem — the lint toolchain itself works.

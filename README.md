@@ -88,12 +88,12 @@ Aave V4 rounds withdrawals in shares, so a partial fill can take a few wei more 
 
 ### Gas
 
-Measured on forks, for whole Fusion fill transactions through a resolver contract:
+Measured on forks of recent blocks, for whole Fusion fill transactions through a resolver contract. The figures move by a few dozen gas from block to block.
 
 | Fill | Ethereum | Avalanche |
 | --- | --- | --- |
-| First fill, applying all three signatures, with an integrator fee | 859,547 | 831,136 |
-| Later fill, without signatures or fees | 533,743 | 505,758 |
+| First fill, applying all three signatures, with an integrator fee | 860k | 831k |
+| Later fill, without signatures or fees | 534k | 506k |
 
 The extension uses transient storage, so `hardhat.config.js` compiles it for Cancun on every chain.
 

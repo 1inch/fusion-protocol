@@ -22,6 +22,9 @@ async function buildCalldataForOrder({
     whitelistResolvers = [], // bytes10[]
     resolversAllowedTime = [], // uint16[]
     customPostInteraction = '0x',
+    makerAssetSuffix = '0x',
+    preInteraction = '0x',
+    fillTarget,
 }) {
     const {
         contracts: { lopv4, settlement, resolver },
@@ -44,21 +47,25 @@ async function buildCalldataForOrder({
 
     const order = buildOrder(
         orderData,
-        buildSettlementExtensions({
-            feeTaker: await settlement.getAddress(),
-            estimatedTakingAmount,
-            getterExtraPrefix: auctionDetails,
-            integratorFeeRecipient,
-            protocolFeeRecipient,
-            makerReceiver: (makerReceiver && makerReceiver !== constants.ZERO_ADDRESS) ? makerReceiver : undefined,
-            integratorFee,
-            resolverFee,
-            whitelistDiscount: 0,
-            whitelist,
-            whitelistPostInteraction,
-            protocolSurplusFee,
-            customPostInteraction,
-        }),
+        {
+            ...buildSettlementExtensions({
+                feeTaker: await settlement.getAddress(),
+                estimatedTakingAmount,
+                getterExtraPrefix: auctionDetails,
+                integratorFeeRecipient,
+                protocolFeeRecipient,
+                makerReceiver: (makerReceiver && makerReceiver !== constants.ZERO_ADDRESS) ? makerReceiver : undefined,
+                integratorFee,
+                resolverFee,
+                whitelistDiscount: 0,
+                whitelist,
+                whitelistPostInteraction,
+                protocolSurplusFee,
+                customPostInteraction,
+            }),
+            makerAssetSuffix,
+            preInteraction,
+        },
     );
 
     const { r, yParityAndS: vs } = ethers.Signature.from(await signOrder(order, chainId, await lopv4.getAddress(), orderSigner));
@@ -68,7 +75,7 @@ async function buildCalldataForOrder({
         threshold,
         extension: order.extension,
         interaction: await resolver.getAddress() + (isInnermostOrder ? '01' : '00') + trim0x(additionalDataForSettlement),
-        target: await resolver.getAddress(),
+        target: fillTarget || await resolver.getAddress(),
     });
 
     return lopv4.interface.encodeFunctionData('fillOrderArgs', [

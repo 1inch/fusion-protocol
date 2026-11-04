@@ -10,7 +10,7 @@ const OWNABLE_ABI = [
 // OZ v5 Ownable custom error selector: OwnableUnauthorizedAccount(address)
 const OWNABLE_UNAUTHORIZED_SELECTOR = ethers.id('OwnableUnauthorizedAccount(address)').slice(0, 10);
 
-async function main () {
+async function main() {
     const networkName = hre.network.name;
     const chainId = (await ethers.provider.getNetwork()).chainId.toString();
     console.log(`running ${networkName} (chainId: ${chainId}) transfer-ownership script`);

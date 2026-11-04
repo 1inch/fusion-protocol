@@ -29,7 +29,8 @@
     "lint": "yarn lint:js && yarn lint:sol",
     "lint:fix": "yarn lint:js:fix && yarn lint:sol:fix",
     "test": "hardhat test --parallel",
-    "test:ci": "hardhat test"
+    "test:ci": "hardhat test",
+    "test:fork": "hardhat test test/fork/AaveV4CollateralSwap.fork.js"
   },
   "dependencies": {
     "@1inch/delegating": "1.1.0",

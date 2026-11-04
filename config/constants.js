@@ -17,4 +17,10 @@ module.exports = {
     MINT_TOKEN_ID: constants.mintTokenId || {},
     CONTRACT_ADDRESS: constants.contractAddress || {},
     NEW_OWNER: constants.newOwner || {},
+    SETTLEMENT_ADDRESS: constants.settlementAddress || {},
+    AAVE_V4_GIVER_POSITION_MANAGER: constants.aaveV4GiverPositionManager || {},
+    AAVE_V4_TAKER_POSITION_MANAGER: constants.aaveV4TakerPositionManager || {},
+    AAVE_V4_SIGNATURE_GATEWAY: constants.aaveV4SignatureGateway || {},
+    AAVE_V4_COLLATERAL_SWAP_SALT: constants.aaveV4CollateralSwapSalt || {},
+    AAVE_V4_COLLATERAL_SWAP_OWNER: constants.aaveV4CollateralSwapOwner || {},
 };

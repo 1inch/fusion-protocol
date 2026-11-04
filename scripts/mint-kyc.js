@@ -2,7 +2,7 @@ const hre = require('hardhat');
 const { ethers } = hre;
 const constants = require('../config/constants');
 
-async function main () {
+async function main() {
     const networkName = hre.network.name;
     const chainId = (await ethers.provider.getNetwork()).chainId.toString();
     console.log(`running ${networkName} (chainId: ${chainId}) mint-kyc script`);

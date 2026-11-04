@@ -24,11 +24,13 @@ FILE_DEPLOY_POWER_POD := $(CURRENT_DIR)/deploy/deploy-power-pod.js
 FILE_DEPLOY_WHITELIST_REGISTRY := $(CURRENT_DIR)/deploy/deploy-whitelist-registry.js
 FILE_DEPLOY_CROSSCHAIN_WHITELIST := $(CURRENT_DIR)/deploy/deploy-crosschain-whitelist.js
 FILE_DEPLOY_RESOLVER_METADATA := $(CURRENT_DIR)/deploy/deploy-resolver-metadata.js
+FILE_DEPLOY_AAVE_V4_COLLATERAL_SWAP := $(CURRENT_DIR)/deploy/deploy-aave-v4-collateral-swap.js
+FILE_DRY_RUN_AAVE_V4_COLLATERAL_SWAP := $(CURRENT_DIR)/scripts/dry-run-aave-v4-collateral-swap.js
 FILE_MINT_KYC := $(CURRENT_DIR)/scripts/mint-kyc.js
 FILE_TRANSFER_OWNERSHIP := $(CURRENT_DIR)/scripts/transfer-ownership.js
 FILE_CONSTANTS_JSON := $(CURRENT_DIR)/config/constants.json
 
-ALL_DEPLOY_FILES := $(FILE_DEPLOY_KYC_NFT) $(FILE_DEPLOY_SETTLEMENT) $(FILE_DEPLOY_POWER_POD) $(FILE_DEPLOY_WHITELIST_REGISTRY) $(FILE_DEPLOY_CROSSCHAIN_WHITELIST) $(FILE_DEPLOY_RESOLVER_METADATA)
+ALL_DEPLOY_FILES := $(FILE_DEPLOY_KYC_NFT) $(FILE_DEPLOY_SETTLEMENT) $(FILE_DEPLOY_POWER_POD) $(FILE_DEPLOY_WHITELIST_REGISTRY) $(FILE_DEPLOY_CROSSCHAIN_WHITELIST) $(FILE_DEPLOY_RESOLVER_METADATA) $(FILE_DEPLOY_AAVE_V4_COLLATERAL_SWAP)
 
 IS_ZKSYNC := $(findstring zksync,$(OPS_NETWORK))
 
@@ -50,6 +52,9 @@ deploy-crosschain-whitelist:
 
 deploy-resolver-metadata:
 		@$(MAKE) OPS_SKIP_VERIFY=$(OPS_SKIP_VERIFY) OPS_CURRENT_DEP_FILE=$(FILE_DEPLOY_RESOLVER_METADATA) validate-resolver-metadata deploy-skip-all deploy-noskip deploy-impl deploy-skip
+
+deploy-aave-v4-collateral-swap:
+		@$(MAKE) OPS_SKIP_VERIFY=$(OPS_SKIP_VERIFY) OPS_CURRENT_DEP_FILE=$(FILE_DEPLOY_AAVE_V4_COLLATERAL_SWAP) validate-aave-v4-collateral-swap deploy-skip-all deploy-noskip deploy-impl deploy-skip
 
 deploy-impl:
 		@{ \
@@ -119,6 +124,29 @@ validate-resolver-metadata:
 		$(MAKE) validate-base || exit 1; \
 		$(MAKE) ID=OPS_POWER_POD_ADDRESS validate || exit 1; \
 		$(MAKE) process-power-pod || exit 1; \
+		}
+
+# Ethereum, Avalanche and Base addresses are in config/constants.json; the OPS_* address variables override them
+validate-aave-v4-collateral-swap:
+		@{ \
+		$(MAKE) validate-base || exit 1; \
+		if [ "$(IS_ZKSYNC)" = "" ] && [ "$(OPS_DEPLOYMENT_METHOD)" != "create" ]; then \
+			$(MAKE) ID=OPS_CREATE3_DEPLOYER_ADDRESS validate || exit 1; \
+			$(MAKE) ID=OPS_AAVE_V4_COLLATERAL_SWAP_SALT validate || exit 1; \
+		fi; \
+		if [ -n "$$OPS_ROUTER_V6_ADDRESS" ]; then \
+			$(MAKE) process-router-v6 || exit 1; \
+		fi; \
+		$(MAKE) process-settlement-address process-aave-v4-giver-position-manager process-aave-v4-taker-position-manager process-aave-v4-signature-gateway process-aave-v4-collateral-swap-owner process-aave-v4-collateral-swap-salt process-create3-deployer || exit 1; \
+		}
+
+# Dry-run targets
+dry-run-aave-v4-collateral-swap:
+		@$(MAKE) validate-aave-v4-collateral-swap dry-run-aave-v4-collateral-swap-impl
+
+dry-run-aave-v4-collateral-swap-impl:
+		@{ \
+		FORK_CHAIN_ID=$(OPS_CHAIN_ID) yarn hardhat run $(FILE_DRY_RUN_AAVE_V4_COLLATERAL_SWAP) --network hardhat || exit 1; \
 		}
 
 validate-mint-kyc:
@@ -204,6 +232,48 @@ process-create3-deployer:
 		@{ \
 		if [ -n "$$OPS_CREATE3_DEPLOYER_ADDRESS" ]; then \
 			$(MAKE) OPS_GEN_KEY='create3Deployers' OPS_GEN_VAL='$(OPS_CREATE3_DEPLOYER_ADDRESS)' upsert-constant; \
+		fi \
+		}
+
+process-settlement-address:
+		@{ \
+		if [ -n "$$OPS_SETTLEMENT_ADDRESS" ]; then \
+			$(MAKE) OPS_GEN_KEY='settlementAddress' OPS_GEN_VAL='$(OPS_SETTLEMENT_ADDRESS)' upsert-constant; \
+		fi \
+		}
+
+process-aave-v4-giver-position-manager:
+		@{ \
+		if [ -n "$$OPS_AAVE_V4_GIVER_POSITION_MANAGER_ADDRESS" ]; then \
+			$(MAKE) OPS_GEN_KEY='aaveV4GiverPositionManager' OPS_GEN_VAL='$(OPS_AAVE_V4_GIVER_POSITION_MANAGER_ADDRESS)' upsert-constant; \
+		fi \
+		}
+
+process-aave-v4-taker-position-manager:
+		@{ \
+		if [ -n "$$OPS_AAVE_V4_TAKER_POSITION_MANAGER_ADDRESS" ]; then \
+			$(MAKE) OPS_GEN_KEY='aaveV4TakerPositionManager' OPS_GEN_VAL='$(OPS_AAVE_V4_TAKER_POSITION_MANAGER_ADDRESS)' upsert-constant; \
+		fi \
+		}
+
+process-aave-v4-signature-gateway:
+		@{ \
+		if [ -n "$$OPS_AAVE_V4_SIGNATURE_GATEWAY_ADDRESS" ]; then \
+			$(MAKE) OPS_GEN_KEY='aaveV4SignatureGateway' OPS_GEN_VAL='$(OPS_AAVE_V4_SIGNATURE_GATEWAY_ADDRESS)' upsert-constant; \
+		fi \
+		}
+
+process-aave-v4-collateral-swap-owner:
+		@{ \
+		if [ -n "$$OPS_AAVE_V4_COLLATERAL_SWAP_OWNER_ADDRESS" ]; then \
+			$(MAKE) OPS_GEN_KEY='aaveV4CollateralSwapOwner' OPS_GEN_VAL='$(OPS_AAVE_V4_COLLATERAL_SWAP_OWNER_ADDRESS)' upsert-constant; \
+		fi \
+		}
+
+process-aave-v4-collateral-swap-salt:
+		@{ \
+		if [ -n "$$OPS_AAVE_V4_COLLATERAL_SWAP_SALT" ]; then \
+			$(MAKE) OPS_GEN_KEY='aaveV4CollateralSwapSalt' OPS_GEN_VAL='$(OPS_AAVE_V4_COLLATERAL_SWAP_SALT)' upsert-constant; \
 		fi \
 		}
 
@@ -329,6 +399,8 @@ help:
 	@echo "  deploy-whitelist-registry   Deploy whitelist registry contract"
 	@echo "  deploy-crosschain-whitelist Deploy crosschain whitelist contract"
 	@echo "  deploy-resolver-metadata    Deploy resolver metadata contract"
+	@echo "  deploy-aave-v4-collateral-swap Deploy Aave V4 collateral swap extension"
+	@echo "  dry-run-aave-v4-collateral-swap Deploy Aave V4 collateral swap extension on a local fork of OPS_NETWORK"
 	@echo "  validate-base               Validate base required environment variables"
 	@echo "  validate-access-token       Validate access token deployment variables"
 	@echo "  validate-settlement         Validate settlement deployment variables"
@@ -336,6 +408,7 @@ help:
 	@echo "  validate-whitelist-registry Validate whitelist registry deployment variables"
 	@echo "  validate-crosschain-whitelist Validate crosschain whitelist deployment variables"
 	@echo "  validate-resolver-metadata  Validate resolver metadata deployment variables"
+	@echo "  validate-aave-v4-collateral-swap Validate Aave V4 collateral swap deployment variables"
 	@echo "  process-access-token-owner  Update access token owner constant"
 	@echo "  process-access-token-salt   Update access token salt constant"
 	@echo "  process-settlement-owner    Update settlement owner constant"
@@ -347,6 +420,12 @@ help:
 	@echo "  process-dao                Update DAO address constant"
 	@echo "  process-whitelist-registry Update WhitelistRegistry address constant"
 	@echo "  process-create3-deployer    Update create3 deployer constant"
+	@echo "  process-settlement-address Update Settlement address constant"
+	@echo "  process-aave-v4-giver-position-manager Update Aave V4 GiverPositionManager constant"
+	@echo "  process-aave-v4-taker-position-manager Update Aave V4 TakerPositionManager constant"
+	@echo "  process-aave-v4-signature-gateway Update Aave V4 SignatureGateway constant"
+	@echo "  process-aave-v4-collateral-swap-owner Update Aave V4 collateral swap owner constant"
+	@echo "  process-aave-v4-collateral-swap-salt Update Aave V4 collateral swap salt constant"
 	@echo "  upsert-constant            Upsert constant value in JSON file"
 	@echo "  deploy-skip-all            Mark all deploy files as skipped"
 	@echo "  deploy-skip                Mark current deploy file as skipped"
@@ -367,4 +446,4 @@ help:
 	@echo "  help                       Show this help message"
 
 
-.PHONY: help deploy-access-token deploy-settlement deploy-power-pod deploy-whitelist-registry deploy-crosschain-whitelist deploy-resolver-metadata deploy-impl validate-base validate-access-token validate-settlement validate-power-pod validate-whitelist-registry validate-crosschain-whitelist validate-resolver-metadata validate-mint-kyc validate-transfer-ownership process-access-token-owner process-access-token-salt process-access-token-address process-settlement-owner process-settlement-salt process-router-v6 process-weth process-st1inch process-power-pod process-dao process-whitelist-registry process-create3-deployer process-mint-to process-mint-token-id process-contract-address process-new-owner upsert-constant deploy-skip-all deploy-skip deploy-noskip install install-utils install-dependencies clean get get-outputs validate mint-kyc mint-kyc-impl transfer-ownership transfer-ownership-impl
+.PHONY: help deploy-access-token deploy-settlement deploy-power-pod deploy-whitelist-registry deploy-crosschain-whitelist deploy-resolver-metadata deploy-aave-v4-collateral-swap deploy-impl dry-run-aave-v4-collateral-swap dry-run-aave-v4-collateral-swap-impl validate-base validate-access-token validate-settlement validate-power-pod validate-whitelist-registry validate-crosschain-whitelist validate-resolver-metadata validate-aave-v4-collateral-swap validate-mint-kyc validate-transfer-ownership process-access-token-owner process-access-token-salt process-access-token-address process-settlement-owner process-settlement-salt process-router-v6 process-weth process-st1inch process-power-pod process-dao process-whitelist-registry process-create3-deployer process-settlement-address process-aave-v4-giver-position-manager process-aave-v4-taker-position-manager process-aave-v4-signature-gateway process-aave-v4-collateral-swap-owner process-aave-v4-collateral-swap-salt process-mint-to process-mint-token-id process-contract-address process-new-owner upsert-constant deploy-skip-all deploy-skip deploy-noskip install install-utils install-dependencies clean get get-outputs validate mint-kyc mint-kyc-impl transfer-ownership transfer-ownership-impl

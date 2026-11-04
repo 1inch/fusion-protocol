@@ -29,3 +29,8 @@ commands live in `README.md` and `package.json` (`yarn hardhat compile`, `yarn t
   (no RPC URLs configured in the environment), not errors.
 - Deployments go through the `Makefile` and require `OPS_*` variables in `.env` plus real
   network RPC access; none of that is needed for local development, compiling, or testing.
+- The Makefile's `validate` target uses bash-only `${!ID}`, so on Linux run `make SHELL=/bin/bash ...`.
+  The `deploy-*` targets also toggle `module.exports.skip` with BSD `sed -i ''` (macOS only);
+  `make dry-run-aave-v4-collateral-swap` doesn't, and works on Linux with a public RPC.
+- `yarn test:fork` is skipped unless `AAVE_V4_FORK_RPC` is set. Public RPCs such as publicnode work
+  for recent blocks; pinning `AAVE_V4_FORK_BLOCK` needs an archive RPC.

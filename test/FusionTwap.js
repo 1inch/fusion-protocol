@@ -1,14 +1,15 @@
 const { ethers } = require('hardhat');
 const { loadFixture } = require('@nomicfoundation/hardhat-network-helpers');
-const { constants, time, expect, ether, deployContract } = require('@1inch/solidity-utils');
-const { buildMakerTraits, buildTakerTraits, signOrder } = require('@1inch/limit-order-protocol-contract/test/helpers/orderUtils');
+const { constants, time, expect, ether, trim0x, deployContract } = require('@1inch/solidity-utils');
+const { buildOrder, buildMakerTraits, buildTakerTraits, signOrder } = require('@1inch/limit-order-protocol-contract/test/helpers/orderUtils');
 const { initContractsForSettlement } = require('./helpers/fixtures');
-const { buildAuctionDetails } = require('./helpers/fusionUtils');
+const { buildAuctionDetails, buildSettlementExtensions } = require('./helpers/fusionUtils');
 const { buildTwapOrder, buildTwapSchedule } = require('./helpers/twapUtils');
 
 const PARTS = 4;
 const INTERVAL = 600;
 const AUCTION_DURATION = 300;
+const INITIAL_RATE_BUMP = 1000000n;
 const MAKING_AMOUNT = ether('100');
 const TAKING_AMOUNT = ether('0.1');
 const PART_MAKING_AMOUNT = MAKING_AMOUNT / BigInt(PARTS);
@@ -26,29 +27,7 @@ describe('FusionTwap', function () {
         return { ...data, contracts: { ...data.contracts, twap } };
     }
 
-    async function prepareTwap({ data, maker, maxPartsPerFill = 0, ...orderOptions } = {}) {
-        data = data || await loadFixture(initContracts);
-        const { contracts: { dai, weth, lopv4, settlement, resolver, twap }, accounts: { alice }, others: { chainId } } = data;
-
-        const startTime = await time.latest() + 100;
-        const schedule = { startTime, interval: INTERVAL, parts: PARTS, maxPartsPerFill };
-        const { details: auctionDetails } = await buildAuctionDetails({ startTime, duration: AUCTION_DURATION, initialRateBump: 1000000 });
-        const order = buildTwapOrder({
-            twap: await twap.getAddress(),
-            settlement: await settlement.getAddress(),
-            orderData: {
-                maker: maker ? await maker.getAddress() : alice.address,
-                makerAsset: await dai.getAddress(),
-                takerAsset: await weth.getAddress(),
-                makingAmount: MAKING_AMOUNT,
-                takingAmount: TAKING_AMOUNT,
-            },
-            schedule,
-            auctionDetails,
-            ...orderOptions,
-        });
-        const signature = await signOrder(order, chainId, await lopv4.getAddress(), alice);
-
+    function fillerFor({ contracts: { lopv4, resolver } }, order, signature, maker) {
         async function fillBy(isMakingAmount, amount, threshold, timestamp) {
             const takerTraits = buildTakerTraits({
                 makingAmount: isMakingAmount,
@@ -65,10 +44,36 @@ describe('FusionTwap', function () {
             return resolver.settleOrders(calldata);
         }
 
-        const fill = (makingAmount, maxTakingAmount, timestamp) => fillBy(true, makingAmount, maxTakingAmount, timestamp);
-        const fillByTakingAmount = (takingAmount, minMakingAmount, timestamp) => fillBy(false, takingAmount, minMakingAmount, timestamp);
+        return {
+            fill: (makingAmount, maxTakingAmount, timestamp) => fillBy(true, makingAmount, maxTakingAmount, timestamp),
+            fillByTakingAmount: (takingAmount, minMakingAmount, timestamp) => fillBy(false, takingAmount, minMakingAmount, timestamp),
+        };
+    }
 
-        return { ...data, order, schedule, fill, fillByTakingAmount };
+    async function prepareTwap({ data, maker, ...orderOptions } = {}) {
+        data = data || await loadFixture(initContracts);
+        const { contracts, accounts: { alice }, others: { chainId } } = data;
+
+        const startTime = await time.latest() + 100;
+        const schedule = { startTime, interval: INTERVAL, parts: PARTS };
+        const { details: auctionDetails } = await buildAuctionDetails({ startTime, duration: AUCTION_DURATION, initialRateBump: INITIAL_RATE_BUMP });
+        const order = buildTwapOrder({
+            twap: await contracts.twap.getAddress(),
+            settlement: await contracts.settlement.getAddress(),
+            orderData: {
+                maker: maker ? await maker.getAddress() : alice.address,
+                makerAsset: await contracts.dai.getAddress(),
+                takerAsset: await contracts.weth.getAddress(),
+                makingAmount: MAKING_AMOUNT,
+                takingAmount: TAKING_AMOUNT,
+            },
+            schedule,
+            auctionDetails,
+            ...orderOptions,
+        });
+        const signature = await signOrder(order, chainId, await contracts.lopv4.getAddress(), alice);
+
+        return { ...data, order, schedule, ...fillerFor(data, order, signature, maker) };
     }
 
     it('cannot be filled before the first part starts', async function () {
@@ -122,7 +127,7 @@ describe('FusionTwap', function () {
         await expect(tx).to.changeTokenBalances(weth, [alice, resolver], [takingAmount, -takingAmount]);
     });
 
-    it('sells parts missed in earlier intervals on a later auction', async function () {
+    it('sells parts missed in earlier intervals on the current auction', async function () {
         const { contracts: { dai, weth, resolver }, accounts: { alice }, schedule, fill } = await prepareTwap();
         const makingAmount = PART_MAKING_AMOUNT * 3n;
         const takingAmount = takingAmountAt(3, 110);
@@ -132,23 +137,8 @@ describe('FusionTwap', function () {
         await expect(tx).to.changeTokenBalances(weth, [alice, resolver], [takingAmount, -takingAmount]);
     });
 
-    it('limits how many parts a single fill may take', async function () {
-        const { contracts: { dai, twap }, accounts: { alice }, schedule, fill } = await prepareTwap({ maxPartsPerFill: 1 });
-        const partStart = schedule.startTime + 2 * INTERVAL;
-
-        await expect(fill(PART_MAKING_AMOUNT * 2n, ether('1'), partStart))
-            .to.be.revertedWithCustomError(twap, 'TwapFillTooLarge').withArgs(PART_MAKING_AMOUNT * 2n, PART_MAKING_AMOUNT);
-
-        for (let i = 1; i <= 3; i++) {
-            const tx = await fill(PART_MAKING_AMOUNT, ether('1'), partStart + i);
-            await expect(tx).to.changeTokenBalance(dai, alice, -PART_MAKING_AMOUNT);
-        }
-        await expect(fill(PART_MAKING_AMOUNT, ether('1'), partStart + 4))
-            .to.be.revertedWithCustomError(twap, 'TwapAmountNotUnlocked').withArgs(MAKING_AMOUNT, PART_MAKING_AMOUNT * 3n);
-    });
-
-    it('sells what is left at the limit price after the last auction, until the order expires', async function () {
-        const { contracts: { dai, weth, lopv4, resolver }, accounts: { alice }, schedule, fill } = await prepareTwap();
+    it('sells the last part until the last interval ends, and nothing after', async function () {
+        const { contracts: { dai, weth, resolver, twap }, accounts: { alice }, schedule, fill } = await prepareTwap();
         const end = schedule.startTime + PARTS * INTERVAL;
         const makingAmount = MAKING_AMOUNT / 2n;
         const takingAmount = TAKING_AMOUNT / 2n;
@@ -157,7 +147,13 @@ describe('FusionTwap', function () {
         await expect(tx).to.changeTokenBalances(dai, [alice, resolver], [-makingAmount, makingAmount]);
         await expect(tx).to.changeTokenBalances(weth, [alice, resolver], [takingAmount, -takingAmount]);
 
-        await expect(fill(PART_MAKING_AMOUNT, ether('1'), end + 1)).to.be.revertedWithCustomError(lopv4, 'OrderExpired');
+        await expect(fill(PART_MAKING_AMOUNT, ether('1'), end)).to.be.revertedWithCustomError(twap, 'TwapEnded');
+    });
+
+    it('ends with its schedule even when the order never expires', async function () {
+        const { contracts: { twap }, schedule, fill } = await prepareTwap({ makerTraits: buildMakerTraits() });
+        await expect(fill(PART_MAKING_AMOUNT, ether('1'), schedule.startTime + PARTS * INTERVAL + 3600))
+            .to.be.revertedWithCustomError(twap, 'TwapEnded');
     });
 
     it('charges the settlement fees on every part', async function () {
@@ -203,11 +199,6 @@ describe('FusionTwap', function () {
         await expect(fill(PART_MAKING_AMOUNT, ether('1'), schedule.startTime)).to.be.revertedWithCustomError(twap, 'TwapScheduleNotFound');
     });
 
-    it('refuses to price an order that cannot be filled more than once', async function () {
-        const { contracts: { twap }, schedule, fill } = await prepareTwap({ makerTraits: buildMakerTraits({ allowMultipleFills: false }) });
-        await expect(fill(PART_MAKING_AMOUNT, ether('1'), schedule.startTime)).to.be.revertedWithCustomError(twap, 'TwapRequiresMultipleFills');
-    });
-
     it('refuses to price an order whose schedule is enforced by another contract', async function () {
         const data = await loadFixture(initContracts);
         const otherTwap = await deployContract('FusionTwap');
@@ -215,26 +206,47 @@ describe('FusionTwap', function () {
         await expect(fill(PART_MAKING_AMOUNT, ether('1'), schedule.startTime)).to.be.revertedWithCustomError(twap, 'TwapScheduleNotFound');
     });
 
+    it('refuses a fill priced by an amount getter that bypasses it', async function () {
+        const data = await loadFixture(initContracts);
+        const { contracts: { dai, weth, lopv4, settlement, twap }, accounts: { alice }, others: { chainId } } = data;
+        const startTime = await time.latest() + 100;
+        const { details: auctionDetails } = await buildAuctionDetails({ startTime, duration: AUCTION_DURATION, initialRateBump: INITIAL_RATE_BUMP });
+        const extensions = buildSettlementExtensions({
+            feeTaker: await settlement.getAddress(),
+            estimatedTakingAmount: TAKING_AMOUNT,
+            getterExtraPrefix: auctionDetails,
+            whitelistDiscount: 0,
+            whitelistPostInteraction: ethers.solidityPacked(['uint32', 'uint8'], [startTime, 0]),
+        });
+        const order = buildOrder(
+            {
+                maker: alice.address,
+                makerAsset: await dai.getAddress(),
+                takerAsset: await weth.getAddress(),
+                makingAmount: MAKING_AMOUNT,
+                takingAmount: TAKING_AMOUNT,
+                makerTraits: buildMakerTraits(),
+            },
+            {
+                makingAmountData: await twap.getAddress() + trim0x(extensions.makingAmountData),
+                takingAmountData: extensions.takingAmountData,
+                preInteraction: await twap.getAddress() + trim0x(buildTwapSchedule({ startTime, interval: INTERVAL, parts: PARTS })),
+                postInteraction: extensions.postInteraction,
+            },
+        );
+        const { fill } = fillerFor(data, order, await signOrder(order, chainId, await lopv4.getAddress(), alice));
+
+        await expect(fill(PART_MAKING_AMOUNT, ether('1'), startTime)).to.be.revertedWithCustomError(twap, 'TwapScheduleNotFound');
+    });
+
+    it('refuses to price an order that cannot be filled more than once', async function () {
+        const { contracts: { twap }, schedule, fill } = await prepareTwap({ makerTraits: buildMakerTraits({ allowMultipleFills: false }) });
+        await expect(fill(PART_MAKING_AMOUNT, ether('1'), schedule.startTime)).to.be.revertedWithCustomError(twap, 'TwapRequiresMultipleFills');
+    });
+
     it('refuses to price an order without the settlement auction behind it', async function () {
         const { contracts: { twap }, schedule, fill } = await prepareTwap({ auctionDetails: '0x' });
         await expect(fill(PART_MAKING_AMOUNT, ether('1'), schedule.startTime)).to.be.revertedWithCustomError(twap, 'TwapInvalidAuctionDetails');
-    });
-
-    describe('schedule validation', function () {
-        const schedules = {
-            'is too short': '0x000000010000010004',
-            'has a zero interval': buildTwapSchedule({ startTime: 1, interval: 0, parts: 4 }),
-            'has no parts': buildTwapSchedule({ startTime: 1, interval: 600, parts: 0 }),
-            'ends after 2106': buildTwapSchedule({ startTime: 2n ** 32n - 1000n, interval: 600, parts: 4 }),
-        };
-
-        for (const [name, schedule] of Object.entries(schedules)) {
-            it(`rejects a schedule that ${name}`, async function () {
-                const { contracts: { twap }, order } = await prepareTwap();
-                await expect(twap.preInteraction(order, '0x', constants.ZERO_BYTES32, constants.ZERO_ADDRESS, 1, 1, MAKING_AMOUNT, schedule))
-                    .to.be.revertedWithCustomError(twap, 'TwapInvalidSchedule');
-            });
-        }
     });
 
     it('lets the maker cancel the rest of the TWAP', async function () {
@@ -258,6 +270,24 @@ describe('FusionTwap', function () {
             const tx = await fill(PART_MAKING_AMOUNT, takingAmount, schedule.startTime + part * INTERVAL);
             await expect(tx).to.changeTokenBalances(dai, [maker, resolver], [-PART_MAKING_AMOUNT, PART_MAKING_AMOUNT]);
             await expect(tx).to.changeTokenBalances(weth, [maker, resolver], [takingAmount, -takingAmount]);
+        }
+    });
+
+    describe('schedule validation', function () {
+        const schedules = {
+            'is too short': '0x0000000100000100',
+            'starts at zero': buildTwapSchedule({ startTime: 0, interval: INTERVAL, parts: PARTS }),
+            'has a zero interval': buildTwapSchedule({ startTime: 1, interval: 0, parts: PARTS }),
+            'has no parts': buildTwapSchedule({ startTime: 1, interval: INTERVAL, parts: 0 }),
+            'ends after 2106': buildTwapSchedule({ startTime: 2n ** 31n - 1n, interval: 2n ** 24n - 1n, parts: 200 }),
+        };
+
+        for (const [name, schedule] of Object.entries(schedules)) {
+            it(`rejects a schedule that ${name}`, async function () {
+                const { contracts: { twap }, order } = await prepareTwap();
+                await expect(twap.preInteraction(order, order.extension, constants.ZERO_BYTES32, constants.ZERO_ADDRESS, 1, 1, MAKING_AMOUNT, schedule))
+                    .to.be.revertedWithCustomError(twap, 'TwapInvalidSchedule');
+            });
         }
     });
 });

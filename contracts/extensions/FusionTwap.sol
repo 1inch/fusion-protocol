@@ -11,46 +11,49 @@ import { MakerTraits, MakerTraitsLib } from "@1inch/limit-order-protocol-contrac
 
 /**
  * @title FusionTwap
- * @notice Executes one signed Fusion order as a TWAP: the order unlocks in equal parts, one per interval,
- * and every part is sold through a fresh run of the settlement's Dutch auction.
- * @dev The order extension references this contract twice, and the contract keeps no storage:
+ * @notice Executes one signed Fusion order as a TWAP: the order unlocks in equal parts, one per interval, every
+ * part is sold through a fresh run of the settlement's Dutch auction, and nothing is fillable after the last interval.
+ * @dev The order extension references this contract three times, and the contract keeps no storage:
  * - as the pre-interaction, whose data is the schedule, it caps the cumulative filled amount by the parts
  *   unlocked so far, measured with the remaining amount the limit order protocol tracks for the order;
- * - as the amount getter placed in front of the settlement's getter, it restarts the settlement's auction at
+ * - as both amount getters, placed in front of the settlement's getter, it restarts the settlement's auction at
  *   the start of the current part by rewriting the auction start time it forwards.
- * Both roles read the schedule from the pre-interaction, so pricing and enforcement cannot disagree.
- * A part that is not filled within its own interval stays unlocked and is sold on a later part's auction.
+ * The getters read the schedule from the pre-interaction and the pre-interaction checks that both getters route
+ * here, so an order that misses any of the three references cannot be filled.
+ * A part that is not filled within its own interval stays unlocked and is sold on the current part's auction, at
+ * whatever point that curve has reached. An auction shorter than the interval leaves the price at the limit until
+ * the next part starts, so the auction duration should equal the interval.
  */
 contract FusionTwap is IAmountGetter, IPreInteraction {
     using ExtensionLib for bytes;
     using MakerTraitsLib for MakerTraits;
 
-    uint256 private constant _SCHEDULE_LENGTH = 10;
+    uint256 private constant _SCHEDULE_LENGTH = 9;
     /// @dev Offset of the 4-byte auction start time inside the settlement's `AuctionDetails`.
     uint256 private constant _AUCTION_START_TIME_OFFSET = 7;
 
     error TwapNotStarted();
+    error TwapEnded();
     error TwapScheduleNotFound();
     error TwapRequiresMultipleFills();
     error TwapInvalidSchedule();
     error TwapInvalidAuctionDetails();
     error TwapAmountNotUnlocked(uint256 filledAmount, uint256 unlockedAmount);
-    error TwapFillTooLarge(uint256 makingAmount, uint256 maxFillAmount);
 
     /**
      * @notice See {IPreInteraction-preInteraction}.
-     * @dev Reverts unless the fill keeps the order within its unlocked parts. It moves no funds and writes
-     * no state, so it is safe for anyone to call. `extraData` is the schedule:
+     * @dev Reverts unless both amount getters route to this contract and the fill keeps the order within its
+     * unlocked parts. It moves no funds and writes no state, so it is safe for anyone to call.
+     * `extraData` is the schedule:
      * ```
      * 4 bytes - start time of the first part
      * 3 bytes - interval between parts, in seconds
      * 2 bytes - number of parts
-     * 1 byte  - maximum number of parts a single fill may take, 0 for no limit
      * ```
      */
     function preInteraction(
         IOrderMixin.Order calldata order,
-        bytes calldata /* extension */,
+        bytes calldata extension,
         bytes32 /* orderHash */,
         address /* taker */,
         uint256 makingAmount,
@@ -58,14 +61,13 @@ contract FusionTwap is IAmountGetter, IPreInteraction {
         uint256 remainingMakingAmount,
         bytes calldata extraData
     ) external view {
-        (uint256 startTime, uint256 interval, uint256 parts, uint256 maxPartsPerFill) = _parseSchedule(extraData);
+        if (!_isRoutedHere(extension.makingAmountData()) || !_isRoutedHere(extension.takingAmountData())) {
+            revert TwapScheduleNotFound();
+        }
+        (uint256 startTime, uint256 interval, uint256 parts) = _parseSchedule(extraData);
         uint256 unlockedAmount = Math.mulDiv(order.makingAmount, _currentPart(startTime, interval, parts) + 1, parts);
         uint256 filledAmount = order.makingAmount - remainingMakingAmount + makingAmount;
         if (filledAmount > unlockedAmount) revert TwapAmountNotUnlocked(filledAmount, unlockedAmount);
-        if (maxPartsPerFill != 0) {
-            uint256 maxFillAmount = Math.mulDiv(order.makingAmount, maxPartsPerFill, parts, Math.Rounding.Ceil);
-            if (makingAmount > maxFillAmount) revert TwapFillTooLarge(makingAmount, maxFillAmount);
-        }
     }
 
     /**
@@ -114,13 +116,9 @@ contract FusionTwap is IAmountGetter, IPreInteraction {
         bytes calldata extraData
     ) private view returns (IAmountGetter getter, bytes memory getterData) {
         bytes calldata preInteractionData = extension.preInteractionTargetAndData();
-        if (
-            !order.makerTraits.needPreInteractionCall() ||
-            preInteractionData.length < 20 + _SCHEDULE_LENGTH ||
-            address(bytes20(preInteractionData)) != address(this)
-        ) revert TwapScheduleNotFound();
+        if (!order.makerTraits.needPreInteractionCall() || !_isRoutedHere(preInteractionData)) revert TwapScheduleNotFound();
         if (order.makerTraits.useBitInvalidator()) revert TwapRequiresMultipleFills();
-        (uint256 startTime, uint256 interval, uint256 parts, ) = _parseSchedule(preInteractionData[20:]);
+        (uint256 startTime, uint256 interval, uint256 parts) = _parseSchedule(preInteractionData[20:]);
 
         if (extraData.length < 20 + _AUCTION_START_TIME_OFFSET + 4) revert TwapInvalidAuctionDetails();
         getter = IAmountGetter(address(bytes20(extraData)));
@@ -132,22 +130,27 @@ contract FusionTwap is IAmountGetter, IPreInteraction {
         }
     }
 
+    function _isRoutedHere(bytes calldata targetAndData) private view returns (bool) {
+        return targetAndData.length >= 20 && address(bytes20(targetAndData)) == address(this);
+    }
+
     function _parseSchedule(bytes calldata schedule) private pure returns (
         uint256 startTime,
         uint256 interval,
-        uint256 parts,
-        uint256 maxPartsPerFill
+        uint256 parts
     ) {
         if (schedule.length < _SCHEDULE_LENGTH) revert TwapInvalidSchedule();
         startTime = uint32(bytes4(schedule[0:4]));
         interval = uint24(bytes3(schedule[4:7]));
         parts = uint16(bytes2(schedule[7:9]));
-        maxPartsPerFill = uint8(schedule[9]);
-        if (interval == 0 || parts == 0 || startTime + (parts - 1) * interval > type(uint32).max) revert TwapInvalidSchedule();
+        if (startTime == 0 || interval == 0 || parts == 0 || startTime + (parts - 1) * interval > type(uint32).max) {
+            revert TwapInvalidSchedule();
+        }
     }
 
-    function _currentPart(uint256 startTime, uint256 interval, uint256 parts) private view returns (uint256) {
+    function _currentPart(uint256 startTime, uint256 interval, uint256 parts) private view returns (uint256 part) {
         if (block.timestamp < startTime) revert TwapNotStarted();
-        return Math.min((block.timestamp - startTime) / interval, parts - 1);
+        part = (block.timestamp - startTime) / interval;
+        if (part >= parts) revert TwapEnded();
     }
 }

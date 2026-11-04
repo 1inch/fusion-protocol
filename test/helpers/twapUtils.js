@@ -3,8 +3,8 @@ const { constants, trim0x } = require('@1inch/solidity-utils');
 const { buildOrder, buildMakerTraits } = require('@1inch/limit-order-protocol-contract/test/helpers/orderUtils');
 const { buildSettlementExtensions } = require('./fusionUtils');
 
-function buildTwapSchedule({ startTime, interval, parts, maxPartsPerFill = 0 }) {
-    return ethers.solidityPacked(['uint32', 'uint24', 'uint16', 'uint8'], [startTime, interval, parts, maxPartsPerFill]);
+function buildTwapSchedule({ startTime, interval, parts }) {
+    return ethers.solidityPacked(['uint32', 'uint24', 'uint16'], [startTime, interval, parts]);
 }
 
 /**
